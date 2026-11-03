@@ -21,10 +21,10 @@ final class MainViewController: UIViewController {
 
         let selfTest = rorcore_self_test()
         if selfTest == 0 {
-            statusLabel.text = "конвейер работает ✅"
+            statusLabel.text = "Pipeline is working ✅"
             statusLabel.textColor = UIColor(red: 0.35, green: 0.85, blue: 0.45, alpha: 1)
         } else {
-            statusLabel.text = "сбой ядра, код \(selfTest) ⛔️"
+            statusLabel.text = "Core failure, code \(selfTest) ⛔️"
             statusLabel.textColor = UIColor(red: 0.95, green: 0.35, blue: 0.35, alpha: 1)
         }
 
@@ -63,6 +63,6 @@ final class MainViewController: UIViewController {
     private func machineSummary() -> String {
         let gb = Double(ProcessInfo.processInfo.physicalMemory) / 1_073_741_824.0
         let limit = Double(rorcore_available_memory()) / 1_048_576.0
-        return String(format: "RAM %.0f GB · лимит приложению %.0f MB", gb, limit)
+        return String(format: "RAM %.0f GB · app limit %.0f MB", gb, limit)
     }
 }

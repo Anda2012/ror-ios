@@ -1,137 +1,133 @@
-# Rigs of Rods для iOS
+# Rigs of Rods for iOS
 
 [![latest-ipa](https://img.shields.io/github/v/tag/wayl-t/Rigs-of-Rods-for-iOS/latest-ipa?label=latest-ipa&color=blue)](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/releases/tag/latest-ipa)
 [![Build](https://img.shields.io/github/actions/workflow/status/wayl-t/Rigs-of-Rods-for-iOS/build-ror-ios.yml?branch=main)](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/actions)
 [![License: GPLv3](https://img.shields.io/badge/license-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-Неофициальный нативный порт [Rigs of Rods](https://www.rigsofrods.org/) — симулятора машин с мягким кузовом — на iPhone и iPad (arm64). Собрано из полного исходного кода игры с iOS-патчами, сенсорным управлением и скачиваемым IPA.
+An unofficial native port of [Rigs of Rods](https://www.rigsofrods.org/), the soft-body vehicle simulator, to iPhone and iPad (arm64). The game can be sideloaded as an IPA.
 
-Оригинальная игра и вся слава принадлежат [команде Rigs of Rods](https://www.rigsofrods.org/credits).
-
-> Unofficial native iOS port of the open-source soft-body vehicle simulator, sideloadable as an IPA. English summary below.
+The original game and all credit belong to the [Rigs of Rods team](https://www.rigsofrods.org/credits).
 
 ---
 
-## Скачать последнюю версию
+## Download the latest version
 
-Актуальная сборка лежит в релизе **latest-ipa** и автоматически перезаписывается каждым успешным прогоном CI:
+The latest build is published in the **latest-ipa** release and is automatically replaced after each successful CI run:
 
-| Файл | Что это | Ссылка |
+| File | Description | Link |
 | --- | --- | --- |
-| **RoR-ios.ipa** | Полная игра, ~115 МБ | [Скачать](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/releases/download/latest-ipa/RoR-ios.ipa) |
-| **RoR-ios-lite.ipa** | Облегчённая, ~43 МБ | [Скачать](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/releases/download/latest-ipa/RoR-ios-lite.ipa) |
-| Все релизы | История версий | [Releases](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/releases) |
+| **RoR-ios.ipa** | Full game, about 115 MB | [Download](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/releases/download/latest-ipa/RoR-ios.ipa) |
+| **RoR-ios-lite.ipa** | Lite build, about 43 MB | [Download](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/releases/download/latest-ipa/RoR-ios-lite.ipa) |
+| All releases | Version history | [Releases](https://github.com/wayl-t/Rigs-of-Rods-for-iOS/releases) |
 
-Ставится через сайдлоад: [SideStore](https://sidestore.io/), [Sideloadly](https://sideloadly.io/) или [ESIGN](https://esign.yyyue.xyz/). С обычным бесплатным Apple ID подпись живёт 7 дней, потом её нужно продлить.
+Install by sideloading with [SideStore](https://sidestore.io/), [Sideloadly](https://sideloadly.io/), or [ESIGN](https://esign.yyyue.xyz/). With a free Apple ID, the app must be re-signed every 7 days.
 
-## Статус
+## Status
 
-- Полная игра на устройстве: меню, выбор карты и машины, настройки, вождение
-- Сенсорное управление: руль, педали, панель систем машины, свободная камера
-- Свои моды через папку content в «Файлах», без пересборки
-- Встроенный репозиторий модов: загрузка через NSURLSession, без libcurl
-- Сборка и упаковка IPA полностью на бесплатных macOS-раннерах GitHub Actions
+- Full game runs on device: menus, map and vehicle selection, settings, and driving
+- Touch controls: steering, pedals, vehicle systems panel, and free camera
+- Custom mods can be loaded from the Files app's `content` folder without rebuilding
+- Built-in mod repository: downloads use `NSURLSession`, not libcurl
+- The IPA is built and packaged entirely on free GitHub Actions macOS runners
 
-## Что сделано
+## Features and implementation
 
-### Управление на экране
+### On-screen controls
 
-- **Руль** — две крупные кнопки слева, газ и тормоз справа, ряд быстрых действий снизу: стояночный тормоз, зажигание, сброс, выход, стартер.
-- **Поворотники и аварийка** — отдельная зона над нижним рядом.
-- **SYS** — открывает настоящее десктопное верхнее меню игры: Simulation / Tuning / Vehicle AI / Vehicles / Saves / Settings / Tools. Тап открывает меню, кнопка CLOSE его закрывает.
-- **VEH** — крупные страницы LIGHTS / DRIVE / EXTRAS для систем машины.
-- **SPAWN / REPO / MENU / HUD / TOP** — спавн через штатный селектор, репозиторий модов, главное меню, компактный HUD и скрытие верхней полосы.
-- В свободной камере — плавающий джойстик, свайп по сцене для обзора и кнопки высоты.
-- Кнопки сделаны светлыми полупрозрачными стёклами с тёмной подписью, чтобы не закрывать 3D-сцену.
+- **Steering wheel** — two large buttons on the left, accelerator and brake on the right, and a bottom row of quick actions: parking brake, ignition, reset, exit, and starter.
+- **Turn signals and hazard lights** — a dedicated area above the bottom row.
+- **SYS** — opens the game's full desktop-style top menu: Simulation / Tuning / Vehicle AI / Vehicles / Saves / Settings / Tools. Tap an item to open its submenu; close it with **CLOSE**.
+- **VEH** — large **LIGHTS / DRIVE / EXTRAS** pages for vehicle systems.
+- **SPAWN / REPO / MENU / HUD / TOP** — spawn a vehicle using the built-in selector, open the mod repository, open the main menu, toggle the compact HUD, and hide the top bar.
+- In free-camera mode, use a floating joystick, swipe across the scene to look around, and use the altitude buttons.
+- Controls use light, translucent glass-like styling with dark labels to avoid obscuring the 3D scene.
 
-### Компактный HUD
+### Compact HUD
 
-Вместо десктопной приборной панели рисуется карточка спидометра:
+A speedometer card is displayed instead of the desktop dashboard. It shows:
 
-- скорость в км/ч, текущая передача, RPM и полоска нагрузки двигателя;
-- снизу — лампочки дальнего и ближнего света, левого и правого поворотника, аварийки, синхронизированные с реальными огнями машины (DashBoardManager).
+- Speed in km/h, current gear, RPM, and an engine-load bar.
+- Indicator lamps for high and low beams, left and right turn signals, and hazard lights, synchronized with the vehicle dashboard.
 
-### Свободная камера вместо пешего персонажа
+### Free camera instead of an on-foot character
 
-Меш игрока на GLES2 не рендерится, поэтому логический объект игрока остаётся для игрового кода, но его графика не регистрируется: вместо аватара включается свободная камера. Выйти из машины можно, джойстик перемещает камеру.
+The player mesh does not render with GLES2. The logical player object remains for game code, while the on-foot character is replaced by a free camera.
 
-### Свои моды
+### Custom mods
 
-Положите любой .zip (машина или карта) в «Файлы › На моём iPhone › Rigs of Rods › content». Игра монтирует его автоматически (UIFileSharingEnabled).
+Place any vehicle or map `.zip` file in **Files › On My iPhone › Rigs of Rods › content**. The game automatically mounts the archive. File sharing is enabled for the app.
 
-### Ключевые исправления по логам устройства
+### Key fixes based on device logs
 
-- Чёрное небо → Sandstorm по умолчанию, тени отключены.
-- Касания не доходили до меню → мост тач → мышь → ImGui.
-- Падение при спавне машин с мягким кузовом → в OGRE исправлен GLES2HardwareBuffer::readData(), буфер привязывается перед glMapBufferRangeEXT.
-- Материалы машин уходили в нерабочий Cg-вариант nicemetal → включён gfx_alt_actor_materials.
-- Моды из репозитория не ставились → переименование .part → .zip через std::filesystem::rename с фолбэком.
+- Black sky → Sandstorm is selected by default and shadows are disabled.
+- Touches did not reach menus → added a touch-to-mouse bridge for ImGui.
+- Crash when spawning soft-body vehicles → fixed `GLES2HardwareBuffer::readData()` in OGRE so the buffer is bound before `glMapBufferRangeEXT`.
+- Vehicle materials selected the unusable Cg `nicemetal` variant → enabled `gfx_alt_actor_materials`.
+- Repository mods failed to install → `.part` files are renamed to `.zip` using `std::filesystem::rename`, with a fallback.
 
-## Как это работает
+## How it works
 
-Репозиторий собирает игру на macOS-раннерах GitHub Actions, без своего Mac и без платного аккаунта Apple Developer:
+This repository builds the game on GitHub Actions macOS runners, without requiring a Mac or a paid Apple Developer account:
 
-1. **build-ios-deps.yml** — кросс-компилирует зависимости (OGRE, OIS, MyGUI, AngelScript, SocketW и другие) в один артефакт SDK.
-2. **build-ror-ios.yml** — скачивает этот SDK, применяет patches/ror/apply_ios_patches.py к исходникам RoR, собирает arm64, упаковывает бандл, подписывает ad-hoc и публикует IPA в релиз latest-ipa.
-3. **patches/verify_ipa.py** — около 25 проверок готового IPA: структура бандла, наличие skeleton.zip, шейдеры MyGUI, RTSS, иконки, сенсорный ввод в бинарнике и критичные CVar-обходы. Сборка падает, если что-то потерялось.
+1. **`build-ios-deps.yml`** cross-compiles dependencies (OGRE, OIS, MyGUI, AngelScript, SocketW, and others) into a single SDK artifact.
+2. **`build-ror-ios.yml`** downloads that SDK, applies `patches/ror/apply_ios_patches.py` to the RoR source, builds for arm64, packages the app with ad-hoc signing, and publishes the IPA to the `latest-ipa` release.
+3. **`patches/verify_ipa.py`** runs about 25 checks on the finished IPA, including bundle structure, `skeleton.zip`, MyGUI shaders, RTSS, icons, and touch controls.
 
-Все правки исходников RoR лежат в одном файле, patches/ror/apply_ios_patches.py, и каждая обёрнута в ifdef ROR_PLATFORM_IOS, поэтому десктопная сборка остаётся нетронутой.
+All changes to the RoR source are collected in `patches/ror/apply_ios_patches.py`. Each patch is guarded by `#ifdef ROR_PLATFORM_IOS`, so desktop builds are unaffected.
 
-Отдельный workflow build-ipa.yml собирает только приложение-проверку конвейера (тег pipeline-check); игры в нём нет.
+The separate **`build-ipa.yml`** workflow builds only a pipeline-test app (tag: `pipeline-check`); it does not contain the game.
 
-## Как установить
+## Installation
 
-1. Откройте ссылку на RoR-ios.ipa в Safari на iPhone или скачайте файл на компьютер и передайте на телефон.
-2. Установите через SideStore, Sideloadly или ESIGN, войдя обычным Apple ID.
-3. При бесплатном Apple ID продлевайте подпись раз в 7 дней.
+1. Open the RoR-ios.ipa link in Safari on your iPhone, or download the file to a computer and transfer it to your device.
+2. Install it with SideStore, Sideloadly, or ESIGN using a regular Apple ID.
+3. With a free Apple ID, renew the signing every 7 days.
 
-> Если страница релиза долго грузится, скачайте IPA из артефактов Actions командой gh run download.
+> If the release page is slow to load, download the IPA from the Actions artifacts with `gh run download`.
 
-## Диагностика на телефоне
+## On-device diagnostics
 
-Если игра падает или не рисуется, смотрите «Файлы › На моём iPhone › Rigs of Rods › ror-trace.log»: файл пишется построчно и сохраняет хвост даже при падении. Строки startup:, [fatal], [crash] и cvars after RoR.cfg показывают фазу запуска и причину.
+If the game crashes or fails to render, inspect **Files › On My iPhone › Rigs of Rods › ror-trace.log**. The log is written line by line and preserves its tail across crashes. It includes startup, fatal, and crash entries, as well as CVar values after `RoR.cfg` is loaded.
 
-## Ограничения
+## Limitations
 
-- Тени не рисуются: PSSM не поддерживается на текущем GLES2-пути.
-- Небо только Sandstorm: Caelum и SkyX не собираются.
-- Мультиплеер на устройстве не протестирован (SocketW без OpenSSL).
-- Сайдлоад с бесплатным Apple ID требует переподписи раз в 7 дней.
+- Shadows are not rendered: PSSM is not supported on the current GLES2 path.
+- Only the Sandstorm sky is available; Caelum and SkyX are not built.
+- Multiplayer has not been tested on device (SocketW is built without OpenSSL).
+- Sideloading with a free Apple ID requires re-signing every 7 days.
 
-## Устройство репозитория
+## Repository layout
 
-    .github/workflows/
-      build-ror-ios.yml         основная сборка: RoR → IPA → Release
-      build-ios-deps.yml        iOS-зависимости, переиспользуются
-      build-ipa.yml             дымовой тест конвейера, НЕ игра
-    patches/
-      ror/apply_ios_patches.py  все правки исходников RoR под iOS
-      ios/make_app_icon.py      генератор иконки
-      verify_ipa.py             проверки готового IPA
-    docs/RELEASE_NOTES.md       текст страницы релиза latest-ipa
-    PORT_FINDINGS.md            подробный разбор найденных проблем
+```text
+.github/workflows/
+  build-ror-ios.yml         Main build: RoR → IPA → Release
+  build-ios-deps.yml        Reusable iOS dependencies
+  build-ipa.yml             Pipeline smoke test; not the game
+patches/
+  ror/apply_ios_patches.py  iOS patches for the RoR source
+  ios/make_app_icon.py      Icon generator
+  verify_ipa.py             IPA validation checks
+docs/RELEASE_NOTES.md       Release notes for the latest-ipa page
+PORT_FINDINGS.md            Detailed analysis of issues found
+```
 
-## Дорожная карта
+## Roadmap
 
-- [x] Конвейер Actions → IPA → Release → сайдлоад
-- [x] Игра на устройстве: меню, карты, машины, управление
-- [x] Свои моды через content и встроенный репозиторий
-- [x] Компактный HUD с лампочками света и поворотников
-- [x] Светлые полупрозрачные кнопки
-- [x] SYS открывает полное десктопное меню
-- [ ] Мультиплеер на устройстве (не протестирован)
-- [ ] Тени: PSSM на GLES2 или альтернатива
-- [ ] Раскладка под iPad
-
-## English summary
-
-Unofficial native iOS (arm64) port of Rigs of Rods, built from the full upstream source on free GitHub Actions macOS runners. Touch controls, a compact HUD with light and indicator lamps, and a sideloadable IPA. Download the latest build from the latest-ipa release and install it with SideStore, Sideloadly, or ESIGN. Rigs of Rods itself is GPLv3 software by the Rigs of Rods Team; this repository only adds the iOS port and build pipeline.
+- [x] Actions → IPA → Release → sideload pipeline
+- [x] Game runs on device: menus, maps, vehicles, and controls
+- [x] Custom mods through `content` and the built-in repository
+- [x] Compact HUD with lights and turn-signal indicators
+- [x] Light, translucent controls
+- [x] SYS opens the full desktop menu
+- [ ] Multiplayer on device (not tested)
+- [ ] Shadows: PSSM on GLES2 or an alternative
+- [ ] iPad layout
 
 ## Credits
 
-- **Original game:** [Rigs of Rods](https://www.rigsofrods.org/) by the [Rigs of Rods Team](https://www.rigsofrods.org/credits), GPLv3.
+- **Original game:** [Rigs of Rods](https://www.rigsofrods.org/) by the [Rigs of Rods team](https://www.rigsofrods.org/credits), GPLv3.
 - **iOS port and build pipeline:** this repository.
 
 ## License
 
-Rigs of Rods распространяется под GPLv3, этот порт тоже. Публикация в App Store невозможна из-за лицензии, но сайдлоад разрешён.
+Rigs of Rods is distributed under GPLv3, and this port is too. App Store publication is not possible under the license terms, but the app can be sideloaded.
