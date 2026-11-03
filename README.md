@@ -34,20 +34,20 @@ Install by sideloading with [SideStore](https://sidestore.io/), [Sideloadly](htt
 
 ### On-screen controls
 
-- **Steering wheel** — two large buttons on the left, accelerator and brake on the right, and a bottom row of quick actions: parking brake, ignition, reset, exit, and starter.
-- **Turn signals and hazard lights** — a dedicated area above the bottom row.
-- **SYS** — opens the game's full desktop-style top menu: Simulation / Tuning / Vehicle AI / Vehicles / Saves / Settings / Tools. Tap an item to open its submenu; close it with **CLOSE**.
-- **VEH** — large **LIGHTS / DRIVE / EXTRAS** pages for vehicle systems.
-- **SPAWN / REPO / MENU / HUD / TOP** — spawn a vehicle using the built-in selector, open the mod repository, open the main menu, toggle the compact HUD, and hide the top bar.
+The driving controls are analog: sliders and a gauge rather than on/off buttons.
+
+- **Pedal slider** (right edge) — drag up from the rest mark for throttle, 0–100%; drag down for brake, 0–100%. The thumb springs back to rest when you let go.
+- **Turn slider** (bottom left) — drag left or right to steer; it springs back to center.
+- **Gear box** (left of the pedal slider) — tap **+** or **−** to shift; the middle shows the current gear.
+- **Speed gauge** (top right) — needle plus a digital km/h read-out. The scale grows in steps of 60 km/h as you speed up. Tap it to open the vehicle panel.
+- **Top-left keys** — **≡** main menu, **S** spawn a vehicle, **R** repair/reset, **E** engine (tap to start: it switches the ignition on and holds the starter until the engine runs; tap again to stop), **C** change camera.
+- **Vehicle panel** — large **LIGHTS / DRIVE / EXTRAS** pages for lights, horn, parking brake, turn signals, gearbox modes and more.
 - In free-camera mode, use a floating joystick, swipe across the scene to look around, and use the altitude buttons.
 - Controls use light, translucent glass-like styling with dark labels to avoid obscuring the 3D scene.
 
 ### Compact HUD
 
-A speedometer card is displayed instead of the desktop dashboard. It shows:
-
-- Speed in km/h, current gear, RPM, and an engine-load bar.
-- Indicator lamps for high and low beams, left and right turn signals, and hazard lights, synchronized with the vehicle dashboard.
+While driving, the speed gauge and gear box (see above) are the read-outs. The older compact card, which also showed RPM, an engine-load bar and lamp indicators for lights and turn signals, is still in the code but switched off; it is still used for the free-camera label.
 
 ### Free camera instead of an on-foot character
 

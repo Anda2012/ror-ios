@@ -2719,6 +2719,9 @@ IOS_TOUCH_CONTROLS_HELPERS = r"""#ifdef ROR_PLATFORM_IOS
 
 #include <imgui.h> // drawn with ImGui's foreground draw list
 #include <cstdio>
+#include <cmath>
+#include <cstring>
+#include <algorithm>
 #include "GUIUtils.h"
 #include "Actor.h"
 #include "gameplay/Character.h"
@@ -2744,6 +2747,98 @@ float s_iosSteer = 0.f;   // -1 = full left .. +1 = full right
 float s_iosJoyX  = 0.f;
 float s_iosJoyY  = 0.f;   // -1 = up (forward) .. +1 = down (back)
 
+// ---- Analog controls: geometry and state ----------------------------------
+// The two sliders are laid out in fractions of the display.  One definition
+// feeds the hit-test, the touch-to-value mapping and the drawing, so what you
+// touch is exactly what you see.
+//
+//   pedal slider  (right edge, tall):  up from the rest mark = throttle 0..100 %,
+//                                      down from it = brake 0..100 %.
+//   turn slider   (bottom left, wide): left/right of centre = steering.
+//
+// Both thumbs spring back to rest when the finger lifts.
+const float kIosPedX = 0.885f, kIosPedY = 0.440f, kIosPedW = 0.110f, kIosPedH = 0.520f;
+const float kIosStrX = 0.030f, kIosStrY = 0.690f, kIosStrW = 0.300f, kIosStrH = 0.290f;
+// Where the pedal thumb rests, as a fraction of its travel counted from the
+// top.  0.74 leaves roughly three quarters of the track for throttle and the
+// bottom quarter for brake.
+const float kIosPedRest = 0.74f;
+
+float s_iosDt         = 0.016f;  // last frame time, set by IosDrawTouchControls
+float s_iosPedalPos   = 0.f;     // +1 full throttle (top) .. 0 rest .. -1 full brake (bottom)
+float s_iosSteerPos   = 0.f;     // -1 full left .. 0 centre .. +1 full right
+float s_iosGaugeSpeed = 0.f;     // smoothed needle value, km/h
+float s_iosGaugeMax   = 120.f;   // current end of the speed scale, km/h
+
+// Exponential smoothing factor for one frame: tau is the time constant in s.
+float IosSmooth(float tau)
+{
+    return 1.f - std::exp(-s_iosDt / tau);
+}
+
+float IosPedalThumbHalf(float H) { return 0.050f * H; }
+
+// Pixel y of the thumb centre at full throttle (top) and full brake (bot).
+void IosPedalTravel(float H, float& top, float& bot)
+{
+    const float half = IosPedalThumbHalf(H);
+    top = kIosPedY * H + half;
+    bot = (kIosPedY + kIosPedH) * H - half;
+}
+
+// Finger y -> pedal position in -1..+1 (small dead zone around rest).
+float IosPedalFromY(float y, float H)
+{
+    float top, bot;
+    IosPedalTravel(H, top, bot);
+    const float rest = top + kIosPedRest * (bot - top);
+    float v = (y <= rest) ? (rest - y) / (rest - top)
+                          : -(y - rest) / (bot - rest);
+    if (v >  1.f) v =  1.f;
+    if (v < -1.f) v = -1.f;
+    if (v > -0.02f && v < 0.02f) v = 0.f;
+    return v;
+}
+
+// Pedal position -> pixel y of the thumb centre.
+float IosPedalThumbY(float pos, float H)
+{
+    float top, bot;
+    IosPedalTravel(H, top, bot);
+    const float rest = top + kIosPedRest * (bot - top);
+    return (pos >= 0.f) ? rest - pos * (rest - top)
+                        : rest + (-pos) * (bot - rest);
+}
+
+float IosSteerThumbHalf(float H) { return 0.034f * H; }
+
+void IosSteerTravel(float W, float H, float& left, float& right)
+{
+    const float half = IosSteerThumbHalf(H);
+    left  = kIosStrX * W + half;
+    right = (kIosStrX + kIosStrW) * W - half;
+}
+
+// Finger x -> steering position in -1..+1 (small dead zone around centre).
+float IosSteerFromX(float x, float W, float H)
+{
+    float left, right;
+    IosSteerTravel(W, H, left, right);
+    const float mid = 0.5f * (left + right);
+    float v = (x - mid) / (0.5f * (right - left));
+    if (v >  1.f) v =  1.f;
+    if (v < -1.f) v = -1.f;
+    if (v > -0.03f && v < 0.03f) v = 0.f;
+    return v;
+}
+
+float IosSteerThumbX(float pos, float W, float H)
+{
+    float left, right;
+    IosSteerTravel(W, H, left, right);
+    return 0.5f * (left + right) + pos * 0.5f * (right - left);
+}
+
 // The vehicle-systems panel opened by the "VEH" button - open or closed.
 bool s_iosPanel = false;
 int s_iosPanelPage = 0;
@@ -2759,7 +2854,10 @@ bool s_iosMenubar = false;
 // sequential pair (EV_TRUCK_SHIFT_UP/DOWN) and the automatic pair
 // (EV_TRUCK_AUTOSHIFT_UP/DOWN) - because Engine.cpp reads only the pair
 // matching the current gearbox mode, and either mode may be active.
-enum IosCtlKind { IOS_STEER, IOS_JOY, IOS_HELD, IOS_TOGGLE, IOS_ENTER, IOS_UNIT, IOS_PANEL, IOS_GUP, IOS_GDN, IOS_REPO, IOS_MENU, IOS_SPAWN, IOS_TAB0, IOS_TAB1, IOS_TAB2, IOS_HUD, IOS_TOP, IOS_MENUBAR_CLOSE };
+enum IosCtlKind { IOS_STEER, IOS_JOY, IOS_HELD, IOS_TOGGLE, IOS_ENTER, IOS_UNIT, IOS_PANEL, IOS_GUP, IOS_GDN, IOS_REPO, IOS_MENU, IOS_SPAWN, IOS_TAB0, IOS_TAB1, IOS_TAB2, IOS_HUD, IOS_TOP, IOS_MENUBAR_CLOSE,
+                    // Analog layout: IOS_PEDALS (throttle/brake slider), IOS_STEERBAR (turn slider),
+                    // IOS_ENGINE (start/stop key), IOS_GEARDISP (gear read-out), IOS_GAUGE (speed dial).
+                    IOS_PEDALS, IOS_STEERBAR, IOS_ENGINE, IOS_GEARDISP, IOS_GAUGE };
 
 struct IosCtl {
     RoR::events ev;      // the event this control drives (STEER/JOY drive several)
@@ -2820,39 +2918,35 @@ void IosLayout(float W, float H, std::vector<IosCtl>& out)
     }
     if (IosInTruck())
     {
-        // Steering uses two independent arrow buttons.  They are easier to
-        // read than a hidden analog bar and leave the right thumb free for
-        // camera look while driving.
-        out.push_back({RoR::EV_TRUCK_STEER_LEFT,  IOS_HELD, 0.035f, 0.615f, 0.125f, 0.185f, "STEER_L"});
-        out.push_back({RoR::EV_TRUCK_STEER_RIGHT, IOS_HELD, 0.180f, 0.615f, 0.125f, 0.185f, "STEER_R"});
-        // Pedals under the right thumb.
-        out.push_back({RoR::EV_TRUCK_ACCELERATE, IOS_HELD,   0.845f, 0.360f, 0.150f, 0.300f, "GAS"});
-        out.push_back({RoR::EV_TRUCK_BRAKE,      IOS_HELD,   0.845f, 0.680f, 0.150f, 0.300f, "BRK"});
-        // A small utility row along the bottom, between steering and pedals.
-        const float ux = 0.452f, uw = 0.070f, uy = 0.855f, uh = 0.125f;
-        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE,        IOS_TOGGLE, ux + 0.f * uw, uy, uw, uh, "P"});
-        out.push_back({RoR::EV_TRUCK_TOGGLE_CONTACT,       IOS_TOGGLE, ux + 1.f * uw, uy, uw, uh, "IGN"});
-        out.push_back({RoR::EV_COMMON_RESET_TRUCK,         IOS_TOGGLE, ux + 2.f * uw, uy, uw, uh, "R"});
-        out.push_back({RoR::EV_COMMON_ENTER_OR_EXIT_TRUCK, IOS_ENTER, ux + 3.f * uw, uy, uw, uh, "EXIT"});
-        out.push_back({RoR::EV_TRUCK_STARTER,              IOS_HELD,   ux + 4.f * uw, uy, uw, uh, "STRT"});
-        // Turn signals and hazard flasher - the left-thumb zone above the bar.
-        const float bx = 0.030f, bw = 0.115f, by = 0.405f, bh = 0.120f;
-        out.push_back({RoR::EV_TRUCK_BLINK_LEFT,  IOS_TOGGLE, bx,                          by, bw, bh, "BL<"});
-        out.push_back({RoR::EV_TRUCK_BLINK_WARN,  IOS_TOGGLE, bx + (bw + 0.010f),          by, bw, bh, "HAZ"});
-        out.push_back({RoR::EV_TRUCK_BLINK_RIGHT, IOS_TOGGLE, bx + 2.f * (bw + 0.010f),    by, bw, bh, "BL>"});
-        // Persistent top action strip: menu, vehicle spawn, repository and
-        // vehicle systems.  The selector itself is the original RoR selector,
-        // opened through its standard input event, so it keeps all spawn modes.
-        if (s_iosTopVisible)
-        {
-            out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_MENU,  0.025f, 0.040f, 0.085f, 0.090f, "MENU"});
-            out.push_back({RoR::EV_COMMON_GET_NEW_VEHICLE, IOS_SPAWN, 0.120f, 0.040f, 0.085f, 0.090f, "SPAWN"});
-            out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_REPO, 0.215f, 0.040f, 0.085f, 0.090f, "REPO"});
-            out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_HUD, 0.310f, 0.040f, 0.085f, 0.090f, "HUD"});
-            out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_UNIT, 0.405f, 0.040f, 0.085f, 0.090f, "SYS"});
-            out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_PANEL, 0.890f, 0.040f, 0.085f, 0.090f, "VEH"});
-        }
-        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOP, 0.795f, 0.040f, 0.085f, 0.090f, "TOP"});
+        // Analog driving layout (see the sketch the controls are based on):
+        //   top left   five square keys: menu, spawn, repair, engine, camera
+        //   top right  speed gauge (tap: vehicle-systems panel)
+        //   right      gear box (+ / gear / -) and the spring-return pedal slider
+        //   bottom left  spring-return turn slider
+        const float sq  = 0.114f * H;               // key side, px
+        const float sw  = sq / W, sh = sq / H;      // ... as display fractions
+        const float step = (sq + 0.5f * sq) / W;    // key pitch
+        const float kx = 0.032f, ky = 0.028f;
+        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE,    IOS_MENU,   kx + 0.f * step, ky, sw, sh, "[M]"});
+        out.push_back({RoR::EV_COMMON_GET_NEW_VEHICLE, IOS_SPAWN,  kx + 1.f * step, ky, sw, sh, "[S]"});
+        out.push_back({RoR::EV_COMMON_RESET_TRUCK,     IOS_TOGGLE, kx + 2.f * step, ky, sw, sh, "[R]"});
+        out.push_back({RoR::EV_TRUCK_TOGGLE_CONTACT,   IOS_ENGINE, kx + 3.f * step, ky, sw, sh, "[E]"});
+        out.push_back({RoR::EV_CAMERA_CHANGE,          IOS_TOGGLE, kx + 4.f * step, ky, sw, sh, "[C]"});
+
+        // Speed gauge, top right.
+        const float gd = std::min(0.34f * H, 0.18f * W);   // diameter, px (capped so it never reaches the panel)
+        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_GAUGE, 0.985f - gd / W, 0.040f, gd / W, gd / H, "GAUGE"});
+
+        // Gear box: + on top, current gear in the middle, - below.
+        const float gx = 0.800f, gw = 0.070f;
+        out.push_back({RoR::EV_TRUCK_SHIFT_UP,   IOS_GUP,     gx, 0.605f, gw, 0.115f, "+"});
+        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_GEARDISP, gx, 0.720f, gw, 0.120f, "GEAR"});
+        out.push_back({RoR::EV_TRUCK_SHIFT_DOWN, IOS_GDN,     gx, 0.840f, gw, 0.115f, "-"});
+
+        // The two analog sliders.  The label is only a name; both are drawn
+        // by IosDrawPedals / IosDrawSteerBar from the shared geometry.
+        out.push_back({RoR::EV_TRUCK_ACCELERATE,  IOS_PEDALS,   kIosPedX, kIosPedY, kIosPedW, kIosPedH, "PEDALS"});
+        out.push_back({RoR::EV_TRUCK_STEER_LEFT,  IOS_STEERBAR, kIosStrX, kIosStrY, kIosStrW, kIosStrH, "STEER"});
         // The SYS button in the strip above opens the desktop top menubar.
         // There is deliberately no km/h switch here: the HUD is the one and
         // only speed readout and it always shows km/h.
@@ -2868,7 +2962,7 @@ void IosLayout(float W, float H, std::vector<IosCtl>& out)
             };
             const char* tab_names[] = {"LIGHTS", "DRIVE", "EXTRAS"};
             const IosCtlKind tab_kinds[] = {IOS_TAB0, IOS_TAB1, IOS_TAB2};
-            const float px0 = 0.375f, pw = 0.132f, pgap = 0.012f;
+            const float px0 = 0.375f, pw = 0.130f, pgap = 0.010f;
             const float py0 = 0.310f, ph = 0.145f, pgapy = 0.018f;
             for (int col = 0; col < 3; ++col)
                 out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, tab_kinds[col], px0 + col * (pw + pgap), 0.185f, pw, 0.085f, tab_names[col]});
@@ -2912,7 +3006,7 @@ bool IosPtIn(const IosCtl& c, float W, float H, float px, float py)
 // inside are swallowed so they can't swing the camera behind the panel).
 void IosPanelRect(float& x0, float& y0, float& x1, float& y1)
 {
-    x0 = 0.360f; y0 = 0.145f; x1 = 0.810f; y1 = 0.820f;
+    x0 = 0.360f; y0 = 0.145f; x1 = 0.790f; y1 = 0.820f;
 }
 
 // The already-tracked control-touch nearest to (px,py), or -1.  The match
@@ -2936,6 +3030,21 @@ int IosFindTouch(float W, float H, float px, float py, int id)
         // from the camera while the joystick (or a pedal) was still held, which
         // is what made the camera drag dead on a two-thumb hold.
         return -1;
+    }
+    {
+        const float mx = 0.04f * W, my = 0.04f * H;
+        for (size_t i = 0; i < s_iosCtlTouches.size(); ++i)
+        {
+            const int k = s_iosCtlTouches[i].kind;
+            float x0, y0, x1, y1;
+            if (k == (int)IOS_PEDALS)
+            { x0 = kIosPedX * W; y0 = kIosPedY * H; x1 = (kIosPedX + kIosPedW) * W; y1 = (kIosPedY + kIosPedH) * H; }
+            else if (k == (int)IOS_STEERBAR)
+            { x0 = kIosStrX * W; y0 = kIosStrY * H; x1 = (kIosStrX + kIosStrW) * W; y1 = (kIosStrY + kIosStrH) * H; }
+            else continue;
+            if (px >= x0 - mx && px <= x1 + mx && py >= y0 - my && py <= y1 + my)
+                return (int)i;
+        }
     }
     const float rad  = 0.08f * ((W < H) ? W : H);
     const float rad2 = rad * rad;
@@ -3035,6 +3144,32 @@ bool IosControlsHandleTouch(int action, float x, float y, int id)
         for (size_t i = 0; i < ctls.size(); ++i)
         {
             if (!IosPtIn(ctls[i], W, H, x, y)) continue;
+            if (ctls[i].kind == IOS_GAUGE)
+            {
+                s_iosPanel = !s_iosPanel;      // tap the gauge: vehicle-systems panel
+                return true;
+            }
+            if (ctls[i].kind == IOS_GEARDISP)
+                return true;                   // read-out only; swallow the tap
+            if (ctls[i].kind == IOS_ENGINE)
+            {
+                // Running: one tap switches the ignition off.  Otherwise make
+                // sure the ignition is on and hold the starter while the finger
+                // rests on the key (IosApplyHeldEvents drops it once it runs).
+                RoR::ActorPtr a = App::GetGameContext()->GetPlayerActor();
+                if (a && a->ar_engine)
+                {
+                    if (a->ar_engine->isRunning())
+                    {
+                        IosPulseEvent(RoR::EV_TRUCK_TOGGLE_CONTACT);
+                        return true;
+                    }
+                    if (!a->ar_engine->hasContact())
+                        IosPulseEvent(RoR::EV_TRUCK_TOGGLE_CONTACT);
+                    s_iosCtlTouches.push_back({x, y, x, y, id, (int)IOS_ENGINE});
+                }
+                return true;
+            }
             if (ctls[i].kind == IOS_PANEL)
             {
                 s_iosPanel = !s_iosPanel;      // the VEH switch: pure UI state
@@ -3193,6 +3328,7 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
     s_iosJoyX  = 0.f;
     s_iosJoyY  = 0.f;
 
+    bool saw_steer = false, saw_pedal = false;
     for (size_t i = 0; i < ctls.size(); ++i)
     {
         const IosCtl& c = ctls[i];
@@ -3200,16 +3336,23 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
         // carry an analog position or a level value.
         if (c.kind == IOS_TOGGLE || c.kind == IOS_ENTER || c.kind == IOS_UNIT || c.kind == IOS_MENUBAR_CLOSE || c.kind == IOS_PANEL || c.kind == IOS_HUD || c.kind == IOS_TOP || c.kind == IOS_MENU || c.kind == IOS_SPAWN ||
             c.kind == IOS_TAB0 || c.kind == IOS_TAB1 || c.kind == IOS_TAB2 ||
-            c.kind == IOS_GUP    || c.kind == IOS_GDN) continue;
+            c.kind == IOS_GUP    || c.kind == IOS_GDN ||
+            c.kind == IOS_GAUGE  || c.kind == IOS_GEARDISP) continue;
 
         // A control is live while some control-finger rests inside its region.
         bool  active = false;
         float tx = 0.f, ty = 0.f;
         for (size_t t = 0; t < s_iosCtlTouches.size(); ++t)
         {
-            const bool floating = (c.kind == IOS_JOY && s_iosCtlTouches[t].kind == (int)IOS_JOY);
-            if (floating || (c.kind != IOS_JOY &&
-                IosPtIn(c, W, H, s_iosCtlTouches[t].x, s_iosCtlTouches[t].y)))
+            // The sliders (and the joystick) keep a finger for as long as it is
+            // down, wherever it wanders; the engine key only while it stays on
+            // the key.  Everything else is live while any control finger is inside.
+            const bool slider = (c.kind == IOS_JOY || c.kind == IOS_PEDALS || c.kind == IOS_STEERBAR);
+            const bool mine   = (s_iosCtlTouches[t].kind == (int)c.kind);
+            const bool floating = slider && mine;
+            const bool on_key = (c.kind == IOS_ENGINE) ? (mine && IosPtIn(c, W, H, s_iosCtlTouches[t].x, s_iosCtlTouches[t].y))
+                                                      : IosPtIn(c, W, H, s_iosCtlTouches[t].x, s_iosCtlTouches[t].y);
+            if (floating || (!slider && on_key))
             {
                 active = true;
                 tx = s_iosCtlTouches[t].x;
@@ -3258,11 +3401,43 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
             if (jx < 0.f) ie->setEventSimulatedValue(RoR::EV_CHARACTER_SIDESTEP_LEFT, -jx);
             if (jx > 0.f) ie->setEventSimulatedValue(RoR::EV_CHARACTER_SIDESTEP_RIGHT, jx);
         }
+        else if (c.kind == IOS_STEERBAR)
+        {
+            // Analog: the thumb follows the finger, then springs back to centre.
+            saw_steer = true;
+            const float target = active ? IosSteerFromX(tx, W, H) : 0.f;
+            s_iosSteerPos += (target - s_iosSteerPos) * IosSmooth(active ? 0.045f : 0.070f);
+            if (!active && std::fabs(s_iosSteerPos) < 0.004f) s_iosSteerPos = 0.f;
+            s_iosSteer = s_iosSteerPos;
+            if (s_iosSteerPos < 0.f)      ie->setEventSimulatedValue(RoR::EV_TRUCK_STEER_LEFT,  -s_iosSteerPos);
+            else if (s_iosSteerPos > 0.f) ie->setEventSimulatedValue(RoR::EV_TRUCK_STEER_RIGHT,  s_iosSteerPos);
+        }
+        else if (c.kind == IOS_PEDALS)
+        {
+            // Analog: above the rest mark is throttle, below it is brake; the
+            // thumb springs back to rest, so the pedal eases off by itself.
+            saw_pedal = true;
+            const float target = active ? IosPedalFromY(ty, H) : 0.f;
+            s_iosPedalPos += (target - s_iosPedalPos) * IosSmooth(active ? 0.045f : 0.080f);
+            if (!active && std::fabs(s_iosPedalPos) < 0.004f) s_iosPedalPos = 0.f;
+            if (s_iosPedalPos > 0.f)      ie->setEventSimulatedValue(RoR::EV_TRUCK_ACCELERATE,  s_iosPedalPos);
+            else if (s_iosPedalPos < 0.f) ie->setEventSimulatedValue(RoR::EV_TRUCK_BRAKE,      -s_iosPedalPos);
+        }
+        else if (c.kind == IOS_ENGINE)
+        {
+            RoR::ActorPtr a = App::GetGameContext()->GetPlayerActor();
+            if (active && a && a->ar_engine && !a->ar_engine->isRunning())
+                ie->setEventSimulatedValue(RoR::EV_TRUCK_STARTER, 1.f);
+        }
         else // IOS_HELD
         {
             ie->setEventSimulatedValue(c.ev, active ? 1.f : 0.f);
         }
     }
+    // A slider that is not on screen (free camera, menus) must not keep a
+    // stale thumb position for the next time it appears.
+    if (!saw_steer) s_iosSteerPos = 0.f;
+    if (!saw_pedal) s_iosPedalPos = 0.f;
 }
 
 // Small code-native pictograms keep the HUD sharp at every phone scale.  They
@@ -3388,6 +3563,225 @@ bool IosIsButton(const IosCtl& c)
     return c.kind != IOS_JOY && c.kind != IOS_STEER;
 }
 
+// ---- Analog controls: drawing ---------------------------------------------
+
+// Top-left key row: labels of the form "[M]" are drawn as a square key with a
+// large letter (or the menu icon) instead of the usual small text label.
+bool IosIsSquareKey(const IosCtl& c)
+{
+    return c.label && c.label[0] == '[' && c.label[1] != '\0' && c.label[2] == ']';
+}
+
+void IosDrawSquareKey(ImDrawList* dl, ImFont* font, const IosCtl& c,
+                      const ImVec2& p0, const ImVec2& p1)
+{
+    if (c.label[1] == 'M')
+    {
+        IosDrawIcon(dl, c, p0, p1, IM_COL32(14, 28, 46, 245));
+        return;
+    }
+    const char s[2] = { c.label[1], '\0' };
+    const float size = 0.56f * (p1.y - p0.y);
+    const ImVec2 ts = font->CalcTextSizeA(size, 1e6f, 0.f, s);
+    const ImVec2 pos(0.5f * (p0.x + p1.x - ts.x), 0.5f * (p0.y + p1.y - ts.y));
+    const ImU32 halo = IM_COL32(255, 255, 255, 150);
+    dl->AddText(font, size, ImVec2(pos.x - 1.2f, pos.y), halo, s);
+    dl->AddText(font, size, ImVec2(pos.x + 1.2f, pos.y), halo, s);
+    dl->AddText(font, size, ImVec2(pos.x, pos.y - 1.2f), halo, s);
+    dl->AddText(font, size, ImVec2(pos.x, pos.y + 1.2f), halo, s);
+    dl->AddText(font, size, pos, IM_COL32(14, 28, 46, 245), s);
+}
+
+// Gear box: the "+" and "-" cells carry one-character labels.
+bool IosIsGearGlyph(const IosCtl& c)
+{
+    return (c.kind == IOS_GUP || c.kind == IOS_GDN) && c.label && c.label[0] != '\0' && c.label[1] == '\0';
+}
+
+void IosDrawGearGlyph(ImDrawList* dl, const IosCtl& c, const ImVec2& p0, const ImVec2& p1)
+{
+    const ImVec2 cc(0.5f * (p0.x + p1.x), 0.5f * (p0.y + p1.y));
+    const float s = 0.22f * std::min(p1.x - p0.x, p1.y - p0.y);
+    const float t = std::max(2.f, s * 0.32f);
+    const ImU32 ink = IM_COL32(14, 28, 46, 245);
+    dl->AddLine(ImVec2(cc.x - s, cc.y), ImVec2(cc.x + s, cc.y), ink, t);
+    if (c.kind == IOS_GUP)
+        dl->AddLine(ImVec2(cc.x, cc.y - s), ImVec2(cc.x, cc.y + s), ink, t);
+}
+
+// Gear box middle cell: the gear the gearbox is in right now.
+void IosDrawGearDisplay(ImDrawList* dl, ImFont* font, const ImVec2& p0, const ImVec2& p1)
+{
+    char g[8] = "N";
+    if (IosInTruck())
+    {
+        RoR::ActorPtr actor = App::GetGameContext()->GetPlayerActor();
+        if (actor && actor->ar_engine)
+        {
+            const int gear = actor->ar_engine->getGear();
+            if (gear < 0)       std::snprintf(g, sizeof(g), "R");
+            else if (gear == 0) std::snprintf(g, sizeof(g), "N");
+            else                std::snprintf(g, sizeof(g), "%d", gear);
+        }
+    }
+    const float r = std::min(14.f, 0.3f * (p1.x - p0.x));
+    dl->AddRectFilled(p0, p1, IM_COL32(5, 12, 22, 196), r, ImDrawCornerFlags_All);
+    dl->AddRect(p0, p1, IM_COL32(150, 205, 245, 160), r, ImDrawCornerFlags_All, 1.6f);
+    const float size = 0.62f * (p1.y - p0.y);
+    const ImVec2 ts = font->CalcTextSizeA(size, 1e6f, 0.f, g);
+    dl->AddText(font, size, ImVec2(0.5f * (p0.x + p1.x - ts.x), 0.5f * (p0.y + p1.y - ts.y)),
+                IM_COL32(255, 215, 125, 255), g);
+}
+
+// Throttle / brake slider with a spring-return thumb.
+void IosDrawPedals(ImDrawList* dl, float W, float H, bool held)
+{
+    float top, bot;
+    IosPedalTravel(H, top, bot);
+    const float zx0 = kIosPedX * W;
+    const float zx1 = (kIosPedX + kIosPedW) * W;
+    const float cx  = 0.5f * (zx0 + zx1);
+    const float half = IosPedalThumbHalf(H);
+    const float rest = top + kIosPedRest * (bot - top);
+    const float trk = 0.19f * (zx1 - zx0);   // track half width
+
+    const ImVec2 t0(cx - trk, top - 0.55f * half);
+    const ImVec2 t1(cx + trk, bot + 0.55f * half);
+    dl->AddRectFilled(ImVec2(t0.x, t0.y + 2.f), ImVec2(t1.x, t1.y + 2.f), IM_COL32(0, 0, 0, 40), trk, ImDrawCornerFlags_All);
+    dl->AddRectFilled(t0, t1, IM_COL32(236, 245, 255, 70), trk, ImDrawCornerFlags_All);
+    dl->AddRect(t0, t1, IM_COL32(255, 255, 255, 190), trk, ImDrawCornerFlags_All, 1.8f);
+
+    // How far the pedal is pressed: green above the rest mark (throttle),
+    // red below it (brake).
+    const float ty = IosPedalThumbY(s_iosPedalPos, H);
+    if (s_iosPedalPos > 0.002f)
+        dl->AddRectFilled(ImVec2(cx - trk + 3.f, ty), ImVec2(cx + trk - 3.f, rest), IM_COL32(84, 214, 120, 175), 4.f, ImDrawCornerFlags_All);
+    else if (s_iosPedalPos < -0.002f)
+        dl->AddRectFilled(ImVec2(cx - trk + 3.f, rest), ImVec2(cx + trk - 3.f, ty), IM_COL32(240, 84, 76, 190), 4.f, ImDrawCornerFlags_All);
+
+    // The rest mark.
+    dl->AddLine(ImVec2(cx - trk - 7.f, rest), ImVec2(cx + trk + 7.f, rest), IM_COL32(255, 255, 255, 175), 1.5f);
+
+    // Thumb: a bar wider than the track, like a pedal.
+    const ImVec2 b0(zx0, ty - half), b1(zx1, ty + half);
+    dl->AddRectFilled(ImVec2(b0.x, b0.y + 2.f), ImVec2(b1.x, b1.y + 2.f), IM_COL32(0, 0, 0, 50), 10.f, ImDrawCornerFlags_All);
+    dl->AddRectFilled(b0, b1, held ? IM_COL32(150, 208, 255, 228) : IM_COL32(238, 246, 255, 205), 10.f, ImDrawCornerFlags_All);
+    dl->AddRect(b0, b1, IM_COL32(255, 255, 255, 250), 10.f, ImDrawCornerFlags_All, 1.6f);
+    for (int k = -1; k <= 1; ++k)
+        dl->AddLine(ImVec2(cx - 14.f, ty + k * 6.f), ImVec2(cx + 14.f, ty + k * 6.f), IM_COL32(40, 60, 90, 170), 1.6f);
+}
+
+// Turn slider with a spring-return thumb.
+void IosDrawSteerBar(ImDrawList* dl, ImFont* font, float fs, float W, float H, bool held)
+{
+    float left, right;
+    IosSteerTravel(W, H, left, right);
+    const float half = IosSteerThumbHalf(H);
+    const float cy   = (kIosStrY + 0.5f * kIosStrH) * H;
+    const float hh   = 0.045f * H;             // track half height
+    const float mid  = 0.5f * (left + right);
+    const float tx   = IosSteerThumbX(s_iosSteerPos, W, H);
+
+    const ImVec2 t0(left - 0.55f * half, cy - hh);
+    const ImVec2 t1(right + 0.55f * half, cy + hh);
+    dl->AddRectFilled(ImVec2(t0.x, t0.y + 2.f), ImVec2(t1.x, t1.y + 2.f), IM_COL32(0, 0, 0, 40), hh, ImDrawCornerFlags_All);
+    dl->AddRectFilled(t0, t1, IM_COL32(236, 245, 255, 70), hh, ImDrawCornerFlags_All);
+    dl->AddRect(t0, t1, IM_COL32(255, 255, 255, 190), hh, ImDrawCornerFlags_All, 1.8f);
+
+    // How far the wheel is turned, filled out from the centre mark.
+    if (s_iosSteerPos > 0.002f)
+        dl->AddRectFilled(ImVec2(mid, cy - hh + 3.f), ImVec2(tx, cy + hh - 3.f), IM_COL32(88, 177, 255, 190), 4.f, ImDrawCornerFlags_All);
+    else if (s_iosSteerPos < -0.002f)
+        dl->AddRectFilled(ImVec2(tx, cy - hh + 3.f), ImVec2(mid, cy + hh - 3.f), IM_COL32(88, 177, 255, 190), 4.f, ImDrawCornerFlags_All);
+    dl->AddLine(ImVec2(mid, cy - hh - 6.f), ImVec2(mid, cy + hh + 6.f), IM_COL32(255, 255, 255, 175), 1.5f);
+
+    // Thumb: a tall bar, taller than the track.
+    const float th = 0.085f * H;
+    const ImVec2 b0(tx - half, cy - th), b1(tx + half, cy + th);
+    dl->AddRectFilled(ImVec2(b0.x, b0.y + 2.f), ImVec2(b1.x, b1.y + 2.f), IM_COL32(0, 0, 0, 50), 9.f, ImDrawCornerFlags_All);
+    dl->AddRectFilled(b0, b1, held ? IM_COL32(150, 208, 255, 228) : IM_COL32(238, 246, 255, 205), 9.f, ImDrawCornerFlags_All);
+    dl->AddRect(b0, b1, IM_COL32(255, 255, 255, 250), 9.f, ImDrawCornerFlags_All, 1.6f);
+    for (int k = -1; k <= 1; ++k)
+        dl->AddLine(ImVec2(tx + k * 5.f, cy - 10.f), ImVec2(tx + k * 5.f, cy + 10.f), IM_COL32(40, 60, 90, 170), 1.6f);
+
+    // Caption.  The word is also the marker the packaging gate looks for.
+    const char* caption = "STEER";
+    const float cs = fs * 0.5f;
+    const ImVec2 ts = font->CalcTextSizeA(cs, 1e6f, 0.f, caption);
+    const ImVec2 cp(mid - 0.5f * ts.x, (kIosStrY + 0.004f) * H);
+    dl->AddText(font, cs, ImVec2(cp.x + 1.f, cp.y + 1.f), IM_COL32(0, 0, 0, 120), caption);
+    dl->AddText(font, cs, cp, IM_COL32(255, 255, 255, 215), caption);
+}
+
+// Round speed gauge: a needle on a 270 degree dial, with the number in the
+// open gap at the bottom.  Tapping it opens the vehicle-systems panel.
+void IosDrawGauge(ImDrawList* dl, ImFont* font, float W, float H, const IosCtl& c, bool lit)
+{
+    const float R = 0.5f * std::min(c.w * W, c.h * H);
+    const ImVec2 ctr((c.x + 0.5f * c.w) * W, (c.y + 0.5f * c.h) * H);
+
+    float speed = 0.f;
+    if (IosInTruck())
+    {
+        RoR::ActorPtr actor = App::GetGameContext()->GetPlayerActor();
+        if (actor) speed = std::fabs(actor->getSpeed()) * 3.6f;
+    }
+    s_iosGaugeSpeed += (speed - s_iosGaugeSpeed) * IosSmooth(0.09f);
+    // The scale grows in steps of 60 km/h when the needle nears the end and
+    // shrinks again (with hysteresis) when it falls well below the step.
+    if (s_iosGaugeSpeed > 0.92f * s_iosGaugeMax && s_iosGaugeMax < 360.f)
+        s_iosGaugeMax += 60.f;
+    else if (s_iosGaugeMax > 120.f && s_iosGaugeSpeed < 0.55f * (s_iosGaugeMax - 60.f))
+        s_iosGaugeMax -= 60.f;
+
+    dl->AddCircleFilled(ImVec2(ctr.x, ctr.y + 2.f), R, IM_COL32(0, 0, 0, 50), 56);
+    dl->AddCircleFilled(ctr, R, IM_COL32(5, 12, 22, 190), 56);
+    dl->AddCircle(ctr, R, lit ? IM_COL32(150, 208, 255, 255) : IM_COL32(255, 255, 255, 200), 56, 2.f);
+
+    // Angles run clockwise from straight up: -135 deg (lower left) is zero,
+    // +135 deg (lower right) is the end of the scale.
+    const float pi = 3.14159265f;
+    const float a0 = -0.75f * pi;
+    const float sweep = 1.5f * pi;
+    auto pt = [&](float a, float r) { return ImVec2(ctr.x + r * std::sin(a), ctr.y - r * std::cos(a)); };
+
+    const int majors = 6;
+    for (int i = 0; i <= majors * 2; ++i)
+    {
+        const bool major = (i % 2) == 0;
+        const float a = a0 + sweep * (float)i / (float)(majors * 2);
+        dl->AddLine(pt(a, R * (major ? 0.78f : 0.85f)), pt(a, R * 0.93f),
+                    major ? IM_COL32(255, 255, 255, 230) : IM_COL32(190, 215, 240, 150), major ? 2.f : 1.2f);
+        if (major)
+        {
+            char buf[8];
+            std::snprintf(buf, sizeof(buf), "%d", (int)std::lround(s_iosGaugeMax * (float)(i / 2) / (float)majors));
+            const float size = R * 0.17f;
+            const ImVec2 ts = font->CalcTextSizeA(size, 1e6f, 0.f, buf);
+            const ImVec2 lp = pt(a, R * 0.62f);
+            dl->AddText(font, size, ImVec2(lp.x - 0.5f * ts.x, lp.y - 0.5f * ts.y), IM_COL32(200, 225, 250, 230), buf);
+        }
+    }
+
+    float f = s_iosGaugeSpeed / s_iosGaugeMax;
+    if (f < 0.f) f = 0.f;
+    if (f > 1.f) f = 1.f;
+    const float an = a0 + sweep * f;
+    dl->AddLine(pt(an, R * 0.12f), pt(an, R * 0.80f), IM_COL32(238, 64, 56, 255), 2.6f);
+    dl->AddCircleFilled(ctr, R * 0.13f, IM_COL32(16, 26, 40, 255), 24);
+    dl->AddCircle(ctr, R * 0.13f, IM_COL32(255, 255, 255, 210), 24, 1.6f);
+
+    char num[16];
+    std::snprintf(num, sizeof(num), "%d", (int)(s_iosGaugeSpeed + 0.5f));
+    const float ns = R * 0.32f;
+    const ImVec2 nts = font->CalcTextSizeA(ns, 1e6f, 0.f, num);
+    dl->AddText(font, ns, ImVec2(ctr.x - 0.5f * nts.x, ctr.y + R * 0.30f), IM_COL32(255, 255, 255, 255), num);
+    const char* unit = "KM/H";
+    const float us = R * 0.14f;
+    const ImVec2 uts = font->CalcTextSizeA(us, 1e6f, 0.f, unit);
+    dl->AddText(font, us, ImVec2(ctr.x - 0.5f * uts.x, ctr.y + R * 0.66f), IM_COL32(185, 215, 240, 225), unit);
+}
+
 // The on-screen controls themselves, drawn on the foreground draw list so they
 // stay readable over the 3D scene and the dashboard.
 void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
@@ -3425,6 +3819,19 @@ void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
         const ImVec2 p0(c.x * W, c.y * H);
         const ImVec2 p1((c.x + c.w) * W, (c.y + c.h) * H);
 
+        // The analog controls, the gauge and the gear read-out have their own look.
+        if (c.kind == IOS_PEDALS || c.kind == IOS_STEERBAR)
+        {
+            bool held = false;
+            for (size_t t = 0; t < s_iosCtlTouches.size(); ++t)
+                if (s_iosCtlTouches[t].kind == (int)c.kind) { held = true; break; }
+            if (c.kind == IOS_PEDALS) IosDrawPedals(dl, W, H, held);
+            else                      IosDrawSteerBar(dl, font, fs, W, H, held);
+            continue;
+        }
+        if (c.kind == IOS_GAUGE)    { IosDrawGauge(dl, font, W, H, c, s_iosPanel); continue; }
+        if (c.kind == IOS_GEARDISP) { IosDrawGearDisplay(dl, font, p0, p1);        continue; }
+
         bool pressed = false;
         if (c.kind == IOS_PANEL)
         {
@@ -3455,6 +3862,13 @@ void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
         else if (c.kind == IOS_REPO)
         {
             pressed = App::GetGuiManager()->RepositorySelector.IsVisible();
+        }
+        else if (c.kind == IOS_ENGINE)
+        {
+            RoR::ActorPtr a = App::GetGameContext()->GetPlayerActor();
+            pressed = (a && a->ar_engine && a->ar_engine->isRunning());
+            for (size_t t = 0; t < s_iosCtlTouches.size(); ++t)
+                if (s_iosCtlTouches[t].kind == (int)IOS_ENGINE) { pressed = true; break; }
         }
         else
         {
@@ -3500,7 +3914,11 @@ void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
         // Every direct manipulation button is pictographic. Text remains only
         // in the panel title and HUD, where it communicates state rather than
         // occupying a tap target.
-        if (c.kind != IOS_JOY)
+        if (IosIsSquareKey(c))
+            IosDrawSquareKey(dl, font, c, p0, p1);
+        else if (IosIsGearGlyph(c))
+            IosDrawGearGlyph(dl, c, p0, p1);
+        else if (c.kind != IOS_JOY)
             IosDrawButtonLabel(dl, font, c, p0, p1, fs);
 
         // Live marker for the two analog controls.
@@ -3536,7 +3954,10 @@ void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
     // Premium compact driving HUD. It starts below the top action strip and
     // disappears while the vehicle panel or the SYS menubar is open, so it
     // never covers another control.  Speed is always metric here.
-    if (!s_iosPanel && !s_iosMenubar && !App::GetGuiManager()->GameMainMenu.IsVisible())
+    // While driving, the speed gauge replaces this card; it is only shown
+    // there when s_iosHudVisible is switched on (no button does that now).
+    if (!s_iosPanel && !s_iosMenubar && !App::GetGuiManager()->GameMainMenu.IsVisible() &&
+        (!IosInTruck() || s_iosHudVisible))
     {
         const float hud_x = 0.5f * W;
         const float hud_y = (s_iosTopVisible ? 0.145f : 0.040f) * H;
@@ -3674,6 +4095,7 @@ void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
 IOS_TOUCH_CONTROLS_DRAW = r"""#ifdef ROR_PLATFORM_IOS
 void InputEngine::IosDrawTouchControls(float dt)
 {
+    s_iosDt = std::max(0.001f, std::min(0.1f, dt));
     App::GetGuiManager()->VehicleInfoTPanel.SetVisible(
         (IosInTruck() && s_iosHudVisible) ? RoR::GUI::VehicleInfoTPanel::TPANELMODE_TRANSLUCENT
                                           : RoR::GUI::VehicleInfoTPanel::TPANELMODE_HIDDEN);

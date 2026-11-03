@@ -595,16 +595,16 @@ def main(argv):
                       % ", ".join(str(v) for v in ipd))
 
     # ------------------------------------------------------------------ #
-    # 9. The vehicle-systems panel and the turn-signal row (controls 2/2). #
+    # 9. The vehicle-systems panel and its turn signals (controls 2/2).     #
     # ------------------------------------------------------------------ #
     # The touch-sized VEH sheet is split into LIGHTS / DRIVE / EXTRAS pages,
-    # and the turn-signal row remains available beside the steering pad.
-    # "GEAR +" is a unique label from the DRIVE page and "BL<" marks the
-    # signal row; both prove the layout and event mapping reached the binary.
+    # and the turn signals live on its LIGHTS page.
+    # "GEAR +" is a unique label from the DRIVE page and "SIGNAL L" marks
+    # the LIGHTS page; both prove the layout and event mapping reached the binary.
     if exe:
         for marker, what in (
                 (b"GEAR +", "touch-sized vehicle-systems pages (IosLayout VEH panel)"),
-                (b"BL<",  "turn-signal row next to the steering bar")):
+                (b"SIGNAL L", "turn signals in the vehicle-systems panel")):
             if marker not in binary:
                 bad.append(
                     "the executable carries no %r - the %s is not in this "
