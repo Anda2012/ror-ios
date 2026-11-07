@@ -36,12 +36,20 @@ Install by sideloading with [SideStore](https://sidestore.io/), [Sideloadly](htt
 
 The driving controls are analog: sliders and a gauge rather than on/off buttons.
 
+**Land vehicles**
 - **Pedal slider** (right edge) — drag up from the rest mark for throttle, 0–100%; drag down for brake, 0–100%. The thumb springs back to rest when you let go.
 - **Turn slider** (bottom left) — drag left or right to steer; it springs back to center.
 - **Gear box** (left of the pedal slider) — tap **+** or **−** to shift; the middle shows the current gear.
-- **Speed gauge** (top right) — needle plus a digital km/h read-out. The scale grows in steps of 60 km/h as you speed up. Tap it to open the vehicle panel.
-- **Top-left keys** — **≡** main menu, **S** spawn a vehicle, **R** repair/reset, **E** engine (tap to start: it switches the ignition on and holds the starter until the engine runs; tap again to stop), **C** change camera.
-- **Vehicle panel** — large **LIGHTS / DRIVE / EXTRAS** pages for lights, horn, parking brake, turn signals, gearbox modes and more.
+
+**Aircraft** (the layout switches automatically when you enter a plane; left thumb flies the engines, right thumb flies the attitude)
+- **Throttle lever** (left edge) — analog 0–100%; unlike the pedal it stays where you leave it. Beside it: **BRK** (wheel brake, held) and **+ / F# / −** (flaps, with the current setting in the middle).
+- **Rudder slider** (bottom left) — the same slider as the turn slider, driving the rudder; it springs back to center.
+- **Stick pad** (right, under the gauge) — drag for roll (left/right) and pitch (up = stick forward). It springs back to center. If the nose moves the wrong way on your device, flip `kIosPlanePitchInvert`.
+- The vehicle panel has **FLIGHT / ENGINE / LIGHTS** pages: flaps, airbrakes, parking brake, engines, reverse thrust, idle/full throttle, lights.
+
+**Both**
+- **Speed gauge** (top right) — needle plus a digital km/h read-out; the scale grows as you speed up. In aircraft the altitude is shown underneath. Tap the gauge to open the vehicle panel. The vehicles' own dashboards are hidden on iOS.
+- **Top-left keys** — **≡** main menu, **S** spawn a vehicle, **R** repair in place, **E** engine (cars: tap to start, it switches the ignition on and holds the starter until the engine runs, tap again to stop; aircraft: toggle the engines), **C** change camera, **M** the desktop-style menu bar (Simulation, Tuning, Vehicle AI, Vehicles, Saves, Settings, Tools — AI control, removing vehicles, and so on).
 - In free-camera mode, use a floating joystick, swipe across the scene to look around, and use the altitude buttons.
 - Controls use light, translucent glass-like styling with dark labels to avoid obscuring the 3D scene.
 

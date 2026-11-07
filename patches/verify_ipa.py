@@ -599,12 +599,14 @@ def main(argv):
     # ------------------------------------------------------------------ #
     # The touch-sized VEH sheet is split into LIGHTS / DRIVE / EXTRAS pages,
     # and the turn signals live on its LIGHTS page.
-    # "GEAR +" is a unique label from the DRIVE page and "SIGNAL L" marks
-    # the LIGHTS page; both prove the layout and event mapping reached the binary.
+    # "GEAR +" and "SIGNAL L" prove the land-vehicle pages, while "RUDDER"
+    # and "STICK" prove the aircraft controls reached the binary.
     if exe:
         for marker, what in (
-                (b"GEAR +", "touch-sized vehicle-systems pages (IosLayout VEH panel)"),
-                (b"SIGNAL L", "turn signals in the vehicle-systems panel")):
+            (b"GEAR +", "touch-sized vehicle-systems pages (IosLayout VEH panel)"),
+            (b"SIGNAL L", "turn signals in the vehicle-systems panel"),
+            (b"RUDDER", "aircraft rudder slider"),
+            (b"STICK", "aircraft stick pad")):
             if marker not in binary:
                 bad.append(
                     "the executable carries no %r - the %s is not in this "

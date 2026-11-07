@@ -2839,6 +2839,58 @@ float IosSteerThumbX(float pos, float W, float H)
     return 0.5f * (left + right) + pos * 0.5f * (right - left);
 }
 
+const float kIosStkRight = 0.985f, kIosStkY = 0.500f;
+const float kIosLevX = 0.045f, kIosLevY = 0.200f, kIosLevW = 0.110f, kIosLevH = 0.460f;
+const float kIosStkSide = 0.400f;
+const bool kIosPlanePitchInvert = false;
+
+float s_iosStickX = 0.f;
+float s_iosStickY = 0.f;
+float s_iosThrottle = 0.f;
+
+float IosStickHalf(float H) { return 0.055f * H; }
+
+void IosStickRect(float W, float H, float& x0, float& y0, float& side)
+{
+    side = std::min(kIosStkSide * H, 0.185f * W);
+    x0 = kIosStkRight * W - side;
+    y0 = kIosStkY * H;
+}
+
+void IosStickFromXY(float x, float y, float W, float H, float& nx, float& ny)
+{
+    float x0, y0, side;
+    IosStickRect(W, H, x0, y0, side);
+    const float travel = 0.5f * side - IosStickHalf(H);
+    nx = (x - (x0 + 0.5f * side)) / travel;
+    ny = (y - (y0 + 0.5f * side)) / travel;
+    nx = std::max(-1.f, std::min(1.f, nx));
+    ny = std::max(-1.f, std::min(1.f, ny));
+    if (std::fabs(nx) < 0.03f) nx = 0.f;
+    if (std::fabs(ny) < 0.03f) ny = 0.f;
+}
+
+void IosLeverTravel(float H, float& top, float& bot)
+{
+    const float half = IosPedalThumbHalf(H);
+    top = kIosLevY * H + half;
+    bot = (kIosLevY + kIosLevH) * H - half;
+}
+
+float IosLeverFromY(float y, float H)
+{
+    float top, bot;
+    IosLeverTravel(H, top, bot);
+    return std::max(0.f, std::min(1.f, (bot - y) / (bot - top)));
+}
+
+float IosLeverThumbY(float value, float H)
+{
+    float top, bot;
+    IosLeverTravel(H, top, bot);
+    return bot - value * (bot - top);
+}
+
 // The vehicle-systems panel opened by the "VEH" button - open or closed.
 bool s_iosPanel = false;
 int s_iosPanelPage = 0;
@@ -2855,9 +2907,7 @@ bool s_iosMenubar = false;
 // (EV_TRUCK_AUTOSHIFT_UP/DOWN) - because Engine.cpp reads only the pair
 // matching the current gearbox mode, and either mode may be active.
 enum IosCtlKind { IOS_STEER, IOS_JOY, IOS_HELD, IOS_TOGGLE, IOS_ENTER, IOS_UNIT, IOS_PANEL, IOS_GUP, IOS_GDN, IOS_REPO, IOS_MENU, IOS_SPAWN, IOS_TAB0, IOS_TAB1, IOS_TAB2, IOS_HUD, IOS_TOP, IOS_MENUBAR_CLOSE,
-                    // Analog layout: IOS_PEDALS (throttle/brake slider), IOS_STEERBAR (turn slider),
-                    // IOS_ENGINE (start/stop key), IOS_GEARDISP (gear read-out), IOS_GAUGE (speed dial).
-                    IOS_PEDALS, IOS_STEERBAR, IOS_ENGINE, IOS_GEARDISP, IOS_GAUGE };
+                    IOS_PEDALS, IOS_STEERBAR, IOS_ENGINE, IOS_GEARDISP, IOS_GAUGE, IOS_STICK, IOS_LEVER };
 
 struct IosCtl {
     RoR::events ev;      // the event this control drives (STEER/JOY drive several)
@@ -2884,6 +2934,12 @@ bool IosControlsActive()
 bool IosInTruck()
 {
     return App::GetGameContext()->GetPlayerActor() != nullptr;
+}
+
+bool IosInPlane()
+{
+    RoR::ActorPtr actor = App::GetGameContext()->GetPlayerActor();
+    return actor && actor->ar_driveable == RoR::AIRPLANE;
 }
 
 // The display size ImGui is drawing into - the very space the touch coordinates
@@ -2919,34 +2975,49 @@ void IosLayout(float W, float H, std::vector<IosCtl>& out)
     if (IosInTruck())
     {
         // Analog driving layout (see the sketch the controls are based on):
-        //   top left   five square keys: menu, spawn, repair, engine, camera
+        //   top left   six square keys: menu, spawn, repair, engine, camera, menubar
         //   top right  speed gauge (tap: vehicle-systems panel)
         //   right      gear box (+ / gear / -) and the spring-return pedal slider
         //   bottom left  spring-return turn slider
-        const float sq  = 0.114f * H;               // key side, px
-        const float sw  = sq / W, sh = sq / H;      // ... as display fractions
-        const float step = (sq + 0.5f * sq) / W;    // key pitch
-        const float kx = 0.032f, ky = 0.028f;
-        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE,    IOS_MENU,   kx + 0.f * step, ky, sw, sh, "[M]"});
-        out.push_back({RoR::EV_COMMON_GET_NEW_VEHICLE, IOS_SPAWN,  kx + 1.f * step, ky, sw, sh, "[S]"});
-        out.push_back({RoR::EV_COMMON_RESET_TRUCK,     IOS_TOGGLE, kx + 2.f * step, ky, sw, sh, "[R]"});
-        out.push_back({RoR::EV_TRUCK_TOGGLE_CONTACT,   IOS_ENGINE, kx + 3.f * step, ky, sw, sh, "[E]"});
-        out.push_back({RoR::EV_CAMERA_CHANGE,          IOS_TOGGLE, kx + 4.f * step, ky, sw, sh, "[C]"});
+        const bool plane = IosInPlane();
+        const float sq = 0.082f * H;
+        const float sw = sq / W, sh = sq / H;
+        const float step = (sq + 0.54f * sq) / W;
+        const float kx = 0.032f, ky = 0.030f;
+        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_MENU, kx, ky, sw, sh, "[=]"});
+        out.push_back({RoR::EV_COMMON_GET_NEW_VEHICLE, IOS_SPAWN, kx + step, ky, sw, sh, "[S]"});
+        out.push_back({RoR::EV_COMMON_REPAIR_TRUCK, IOS_TOGGLE, kx + 2.f * step, ky, sw, sh, "[R]"});
+        if (plane)
+            out.push_back({RoR::EV_AIRPLANE_TOGGLE_ENGINES, IOS_TOGGLE, kx + 3.f * step, ky, sw, sh, "[E]"});
+        else
+            out.push_back({RoR::EV_TRUCK_TOGGLE_CONTACT, IOS_ENGINE, kx + 3.f * step, ky, sw, sh, "[E]"});
+        out.push_back({RoR::EV_CAMERA_CHANGE, IOS_TOGGLE, kx + 4.f * step, ky, sw, sh, "[C]"});
+        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_UNIT, kx + 5.f * step, ky, sw, sh, "[M]"});
 
         // Speed gauge, top right.
         const float gd = std::min(0.34f * H, 0.18f * W);   // diameter, px (capped so it never reaches the panel)
         out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_GAUGE, 0.985f - gd / W, 0.040f, gd / W, gd / H, "GAUGE"});
 
-        // Gear box: + on top, current gear in the middle, - below.
-        const float gx = 0.800f, gw = 0.070f;
-        out.push_back({RoR::EV_TRUCK_SHIFT_UP,   IOS_GUP,     gx, 0.605f, gw, 0.115f, "+"});
-        out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_GEARDISP, gx, 0.720f, gw, 0.120f, "GEAR"});
-        out.push_back({RoR::EV_TRUCK_SHIFT_DOWN, IOS_GDN,     gx, 0.840f, gw, 0.115f, "-"});
-
-        // The two analog sliders.  The label is only a name; both are drawn
-        // by IosDrawPedals / IosDrawSteerBar from the shared geometry.
-        out.push_back({RoR::EV_TRUCK_ACCELERATE,  IOS_PEDALS,   kIosPedX, kIosPedY, kIosPedW, kIosPedH, "PEDALS"});
-        out.push_back({RoR::EV_TRUCK_STEER_LEFT,  IOS_STEERBAR, kIosStrX, kIosStrY, kIosStrW, kIosStrH, "STEER"});
+        if (plane)
+        {
+            const float ss = std::min(kIosStkSide * H, 0.185f * W);
+            out.push_back({RoR::EV_AIRPLANE_STEER_LEFT, IOS_STICK, kIosStkRight - ss / W, kIosStkY, ss / W, ss / H, "STICK"});
+            out.push_back({RoR::EV_AIRPLANE_RUDDER_LEFT, IOS_STEERBAR, kIosStrX, kIosStrY, kIosStrW, kIosStrH, "RUDDER"});
+            out.push_back({RoR::EV_AIRPLANE_THROTTLE_AXIS, IOS_LEVER, kIosLevX, kIosLevY, kIosLevW, kIosLevH, "THROTTLE"});
+            out.push_back({RoR::EV_AIRPLANE_BRAKE, IOS_HELD, 0.170f, 0.200f, 0.070f, 0.100f, "BRK"});
+            out.push_back({RoR::EV_AIRPLANE_FLAPS_MORE, IOS_TOGGLE, 0.170f, 0.320f, 0.070f, 0.105f, "+"});
+            out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_GEARDISP, 0.170f, 0.435f, 0.070f, 0.110f, "FLAPS"});
+            out.push_back({RoR::EV_AIRPLANE_FLAPS_LESS, IOS_TOGGLE, 0.170f, 0.555f, 0.070f, 0.105f, "-"});
+        }
+        else
+        {
+            const float gx = 0.800f, gw = 0.070f;
+            out.push_back({RoR::EV_TRUCK_SHIFT_UP, IOS_GUP, gx, 0.605f, gw, 0.115f, "+"});
+            out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, IOS_GEARDISP, gx, 0.720f, gw, 0.120f, "GEAR"});
+            out.push_back({RoR::EV_TRUCK_SHIFT_DOWN, IOS_GDN, gx, 0.840f, gw, 0.115f, "-"});
+            out.push_back({RoR::EV_TRUCK_ACCELERATE, IOS_PEDALS, kIosPedX, kIosPedY, kIosPedW, kIosPedH, "PEDALS"});
+            out.push_back({RoR::EV_TRUCK_STEER_LEFT, IOS_STEERBAR, kIosStrX, kIosStrY, kIosStrW, kIosStrH, "STEER"});
+        }
         // The SYS button in the strip above opens the desktop top menubar.
         // There is deliberately no km/h switch here: the HUD is the one and
         // only speed readout and it always shows km/h.
@@ -2960,7 +3031,22 @@ void IosLayout(float W, float H, std::vector<IosCtl>& out)
                 { {RoR::EV_TRUCK_SWITCH_SHIFT_MODES, IOS_TOGGLE, "AUTO / MAN"}, {RoR::EV_TRUCK_SHIFT_UP, IOS_GUP, "GEAR +"}, {RoR::EV_TRUCK_SHIFT_DOWN, IOS_GDN, "GEAR -"}, {RoR::EV_TRUCK_SHIFT_NEUTRAL, IOS_TOGGLE, "NEUTRAL"}, {RoR::EV_TRUCK_SHIFT_GEAR_REVERSE, IOS_TOGGLE, "REVERSE"}, {RoR::EV_TRUCK_TOGGLE_INTER_AXLE_DIFF, IOS_TOGGLE, "AXLE DIFF"}, {RoR::EV_TRUCK_TOGGLE_INTER_WHEEL_DIFF, IOS_TOGGLE, "WHEEL DIFF"}, {RoR::EV_TRUCK_TOGGLE_TCASE_4WD_MODE, IOS_TOGGLE, "4WD"}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, "PARKING"} },
                 { {RoR::EV_TRUCK_MANUAL_CLUTCH, IOS_HELD, "CLUTCH"}, {RoR::EV_TRUCK_TRAILER_PARKING_BRAKE, IOS_TOGGLE, "TRAILER"}, {RoR::EV_TRUCK_CRUISE_CONTROL, IOS_TOGGLE, "CRUISE"}, {RoR::EV_TRUCK_CRUISE_CONTROL_ACCL, IOS_HELD, "CRUISE +"}, {RoR::EV_TRUCK_CRUISE_CONTROL_DECL, IOS_HELD, "CRUISE -"}, {RoR::EV_COMMANDS_01, IOS_HELD, "COMMAND 1"}, {RoR::EV_COMMANDS_02, IOS_HELD, "COMMAND 2"}, {RoR::EV_TRUCK_TOGGLE_CONTACT, IOS_TOGGLE, "IGNITION"}, {RoR::EV_TRUCK_STARTER, IOS_HELD, "START"} }
             };
-            const char* tab_names[] = {"LIGHTS", "DRIVE", "EXTRAS"};
+                        static const IosPanelCell plane_pages[3][9] =
+                        {
+                                { {RoR::EV_AIRPLANE_FLAPS_MORE, IOS_TOGGLE, "FLAPS +"}, {RoR::EV_AIRPLANE_FLAPS_LESS, IOS_TOGGLE, "FLAPS -"}, {RoR::EV_AIRPLANE_FLAPS_NONE, IOS_TOGGLE, "FLAPS UP"},
+                                    {RoR::EV_AIRPLANE_AIRBRAKES_MORE, IOS_TOGGLE, "AIRBRAKE +"}, {RoR::EV_AIRPLANE_AIRBRAKES_LESS, IOS_TOGGLE, "AIRBRAKE -"}, {RoR::EV_AIRPLANE_AIRBRAKES_NONE, IOS_TOGGLE, "AIRBRAKE 0"},
+                                    {RoR::EV_AIRPLANE_FLAPS_FULL, IOS_TOGGLE, "FLAPS FULL"}, {RoR::EV_AIRPLANE_AIRBRAKES_FULL, IOS_TOGGLE, "AIRBRAKE FULL"}, {RoR::EV_AIRPLANE_PARKING_BRAKE, IOS_TOGGLE, "PARK BRAKE"} },
+                                { {RoR::EV_AIRPLANE_TOGGLE_ENGINES, IOS_TOGGLE, "ENGINES"}, {RoR::EV_AIRPLANE_REVERSE, IOS_TOGGLE, "REVERSE"}, {RoR::EV_AIRPLANE_THROTTLE_NO, IOS_TOGGLE, "THR IDLE"},
+                                    {RoR::EV_AIRPLANE_THROTTLE_FULL, IOS_TOGGLE, "THR FULL"}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr},
+                                    {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr} },
+                                { {RoR::EV_TRUCK_LIGHTTOGGLE01, IOS_TOGGLE, "LIGHT 1"}, {RoR::EV_TRUCK_LIGHTTOGGLE02, IOS_TOGGLE, "LIGHT 2"}, {RoR::EV_TRUCK_LIGHTTOGGLE03, IOS_TOGGLE, "LIGHT 3"},
+                                    {RoR::EV_COMMON_TOGGLE_TRUCK_BEACONS, IOS_TOGGLE, "BEACONS"}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr},
+                                    {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr}, {RoR::EV_TRUCK_PARKING_BRAKE, IOS_TOGGLE, nullptr} },
+                        };
+                        const IosPanelCell (*pg)[9] = plane ? plane_pages : pages;
+                        const char* tab_names_truck[] = {"LIGHTS", "DRIVE", "EXTRAS"};
+                        const char* tab_names_plane[] = {"FLIGHT", "ENGINE", "LIGHTS"};
+                        const char** tab_names = plane ? tab_names_plane : tab_names_truck;
             const IosCtlKind tab_kinds[] = {IOS_TAB0, IOS_TAB1, IOS_TAB2};
             const float px0 = 0.375f, pw = 0.130f, pgap = 0.010f;
             const float py0 = 0.310f, ph = 0.145f, pgapy = 0.018f;
@@ -2968,11 +3054,12 @@ void IosLayout(float W, float H, std::vector<IosCtl>& out)
                 out.push_back({RoR::EV_TRUCK_PARKING_BRAKE, tab_kinds[col], px0 + col * (pw + pgap), 0.185f, pw, 0.085f, tab_names[col]});
             for (size_t i = 0; i < 9; ++i)
             {
+                if (!pg[s_iosPanelPage][i].label) continue;
                 const float col = (float)(i % 3);
                 const float row = (float)(i / 3);
-                out.push_back({pages[s_iosPanelPage][i].ev, pages[s_iosPanelPage][i].kind,
+                out.push_back({pg[s_iosPanelPage][i].ev, pg[s_iosPanelPage][i].kind,
                                px0 + col * (pw + pgap), py0 + row * (ph + pgapy),
-                               pw, ph, pages[s_iosPanelPage][i].label});
+                               pw, ph, pg[s_iosPanelPage][i].label});
             }
         }
     }
@@ -3041,6 +3128,10 @@ int IosFindTouch(float W, float H, float px, float py, int id)
             { x0 = kIosPedX * W; y0 = kIosPedY * H; x1 = (kIosPedX + kIosPedW) * W; y1 = (kIosPedY + kIosPedH) * H; }
             else if (k == (int)IOS_STEERBAR)
             { x0 = kIosStrX * W; y0 = kIosStrY * H; x1 = (kIosStrX + kIosStrW) * W; y1 = (kIosStrY + kIosStrH) * H; }
+            else if (k == (int)IOS_LEVER)
+            { x0 = kIosLevX * W; y0 = kIosLevY * H; x1 = (kIosLevX + kIosLevW) * W; y1 = (kIosLevY + kIosLevH) * H; }
+            else if (k == (int)IOS_STICK)
+            { float side; IosStickRect(W, H, x0, y0, side); x1 = x0 + side; y1 = y0 + side; }
             else continue;
             if (px >= x0 - mx && px <= x1 + mx && py >= y0 - my && py <= y1 + my)
                 return (int)i;
@@ -3072,6 +3163,13 @@ void IosPulseEvent(RoR::events ev)
         if (s_iosPulses[i].ev == ev) { s_iosPulses[i].t = 0.18f; return; }
     }
     s_iosPulses.push_back({ev, 0.18f});
+}
+
+bool IosPulseActive(RoR::events ev)
+{
+    for (size_t i = 0; i < s_iosPulses.size(); ++i)
+        if (s_iosPulses[i].ev == ev && s_iosPulses[i].t > 0.f) return true;
+    return false;
 }
 
 // Seat directly from the touch action instead of relying on the desktop
@@ -3308,6 +3406,14 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
     ie->setEventSimulatedValue(RoR::EV_TRUCK_STEER_LEFT,    0.f);
     ie->setEventSimulatedValue(RoR::EV_TRUCK_STEER_RIGHT,   0.f);
     ie->setEventSimulatedValue(RoR::EV_TRUCK_STARTER,       0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_STEER_LEFT,    0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_STEER_RIGHT,   0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_ELEVATOR_UP,   0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_ELEVATOR_DOWN, 0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_RUDDER_LEFT,   0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_RUDDER_RIGHT,  0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_THROTTLE_AXIS, 0.f);
+    ie->setEventSimulatedValue(RoR::EV_AIRPLANE_BRAKE,         0.f);
     ie->setEventSimulatedValue(RoR::EV_CHARACTER_FORWARD,   0.f);
     ie->setEventSimulatedValue(RoR::EV_CHARACTER_BACKWARDS, 0.f);
     ie->setEventSimulatedValue(RoR::EV_CHARACTER_LEFT,      0.f);
@@ -3328,7 +3434,7 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
     s_iosJoyX  = 0.f;
     s_iosJoyY  = 0.f;
 
-    bool saw_steer = false, saw_pedal = false;
+    bool saw_steer = false, saw_pedal = false, saw_stick = false, saw_lever = false;
     for (size_t i = 0; i < ctls.size(); ++i)
     {
         const IosCtl& c = ctls[i];
@@ -3347,7 +3453,8 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
             // The sliders (and the joystick) keep a finger for as long as it is
             // down, wherever it wanders; the engine key only while it stays on
             // the key.  Everything else is live while any control finger is inside.
-            const bool slider = (c.kind == IOS_JOY || c.kind == IOS_PEDALS || c.kind == IOS_STEERBAR);
+            const bool slider = (c.kind == IOS_JOY || c.kind == IOS_PEDALS || c.kind == IOS_STEERBAR ||
+                                 c.kind == IOS_STICK || c.kind == IOS_LEVER);
             const bool mine   = (s_iosCtlTouches[t].kind == (int)c.kind);
             const bool floating = slider && mine;
             const bool on_key = (c.kind == IOS_ENGINE) ? (mine && IosPtIn(c, W, H, s_iosCtlTouches[t].x, s_iosCtlTouches[t].y))
@@ -3409,8 +3516,11 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
             s_iosSteerPos += (target - s_iosSteerPos) * IosSmooth(active ? 0.045f : 0.070f);
             if (!active && std::fabs(s_iosSteerPos) < 0.004f) s_iosSteerPos = 0.f;
             s_iosSteer = s_iosSteerPos;
-            if (s_iosSteerPos < 0.f)      ie->setEventSimulatedValue(RoR::EV_TRUCK_STEER_LEFT,  -s_iosSteerPos);
-            else if (s_iosSteerPos > 0.f) ie->setEventSimulatedValue(RoR::EV_TRUCK_STEER_RIGHT,  s_iosSteerPos);
+            const bool plane = IosInPlane();
+            const RoR::events evL = plane ? RoR::EV_AIRPLANE_RUDDER_LEFT : RoR::EV_TRUCK_STEER_LEFT;
+            const RoR::events evR = plane ? RoR::EV_AIRPLANE_RUDDER_RIGHT : RoR::EV_TRUCK_STEER_RIGHT;
+            if (s_iosSteerPos < 0.f)      ie->setEventSimulatedValue(evL, -s_iosSteerPos);
+            else if (s_iosSteerPos > 0.f) ie->setEventSimulatedValue(evR,  s_iosSteerPos);
         }
         else if (c.kind == IOS_PEDALS)
         {
@@ -3429,6 +3539,33 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
             if (active && a && a->ar_engine && !a->ar_engine->isRunning())
                 ie->setEventSimulatedValue(RoR::EV_TRUCK_STARTER, 1.f);
         }
+        else if (c.kind == IOS_STICK)
+        {
+            saw_stick = true;
+            float nx = 0.f, ny = 0.f;
+            if (active) IosStickFromXY(tx, ty, W, H, nx, ny);
+            const float k = IosSmooth(active ? 0.040f : 0.070f);
+            s_iosStickX += (nx - s_iosStickX) * k;
+            s_iosStickY += (ny - s_iosStickY) * k;
+            if (!active && std::fabs(s_iosStickX) < 0.004f) s_iosStickX = 0.f;
+            if (!active && std::fabs(s_iosStickY) < 0.004f) s_iosStickY = 0.f;
+            if (s_iosStickX < 0.f) ie->setEventSimulatedValue(RoR::EV_AIRPLANE_STEER_LEFT, -s_iosStickX);
+            else if (s_iosStickX > 0.f) ie->setEventSimulatedValue(RoR::EV_AIRPLANE_STEER_RIGHT, s_iosStickX);
+            const float pitch = kIosPlanePitchInvert ? -s_iosStickY : s_iosStickY;
+            if (pitch < 0.f) ie->setEventSimulatedValue(RoR::EV_AIRPLANE_ELEVATOR_UP, -pitch);
+            else if (pitch > 0.f) ie->setEventSimulatedValue(RoR::EV_AIRPLANE_ELEVATOR_DOWN, pitch);
+        }
+        else if (c.kind == IOS_LEVER)
+        {
+            saw_lever = true;
+            if (IosPulseActive(RoR::EV_AIRPLANE_THROTTLE_NO)) s_iosThrottle = 0.f;
+            else if (IosPulseActive(RoR::EV_AIRPLANE_THROTTLE_FULL)) s_iosThrottle = 1.f;
+            else if (active)
+                s_iosThrottle += (IosLeverFromY(ty, H) - s_iosThrottle) * IosSmooth(0.045f);
+            if (s_iosThrottle < 0.004f) s_iosThrottle = 0.f;
+            if (s_iosThrottle > 0.f)
+                ie->setEventSimulatedValue(RoR::EV_AIRPLANE_THROTTLE_AXIS, s_iosThrottle);
+        }
         else // IOS_HELD
         {
             ie->setEventSimulatedValue(c.ev, active ? 1.f : 0.f);
@@ -3438,6 +3575,8 @@ void IosApplyHeldEvents(float W, float H, const std::vector<IosCtl>& ctls)
     // stale thumb position for the next time it appears.
     if (!saw_steer) s_iosSteerPos = 0.f;
     if (!saw_pedal) s_iosPedalPos = 0.f;
+    if (!saw_stick) { s_iosStickX = 0.f; s_iosStickY = 0.f; }
+    if (!saw_lever) s_iosThrottle = 0.f;
 }
 
 // Small code-native pictograms keep the HUD sharp at every phone scale.  They
@@ -3565,7 +3704,7 @@ bool IosIsButton(const IosCtl& c)
 
 // ---- Analog controls: drawing ---------------------------------------------
 
-// Top-left key row: labels of the form "[M]" are drawn as a square key with a
+// Top-left key row: bracketed labels are drawn as square keys with a
 // large letter (or the menu icon) instead of the usual small text label.
 bool IosIsSquareKey(const IosCtl& c)
 {
@@ -3575,7 +3714,7 @@ bool IosIsSquareKey(const IosCtl& c)
 void IosDrawSquareKey(ImDrawList* dl, ImFont* font, const IosCtl& c,
                       const ImVec2& p0, const ImVec2& p1)
 {
-    if (c.label[1] == 'M')
+    if (c.label[1] == '=')
     {
         IosDrawIcon(dl, c, p0, p1, IM_COL32(14, 28, 46, 245));
         return;
@@ -3613,7 +3752,12 @@ void IosDrawGearGlyph(ImDrawList* dl, const IosCtl& c, const ImVec2& p0, const I
 void IosDrawGearDisplay(ImDrawList* dl, ImFont* font, const ImVec2& p0, const ImVec2& p1)
 {
     char g[8] = "N";
-    if (IosInTruck())
+    if (IosInPlane())
+    {
+        RoR::ActorPtr actor = App::GetGameContext()->GetPlayerActor();
+        std::snprintf(g, sizeof(g), "F%d", actor ? (int)actor->ar_aerial_flap : 0);
+    }
+    else if (IosInTruck())
     {
         RoR::ActorPtr actor = App::GetGameContext()->GetPlayerActor();
         if (actor && actor->ar_engine)
@@ -3705,12 +3849,79 @@ void IosDrawSteerBar(ImDrawList* dl, ImFont* font, float fs, float W, float H, b
         dl->AddLine(ImVec2(tx + k * 5.f, cy - 10.f), ImVec2(tx + k * 5.f, cy + 10.f), IM_COL32(40, 60, 90, 170), 1.6f);
 
     // Caption.  The word is also the marker the packaging gate looks for.
-    const char* caption = "STEER";
+    const char* caption = IosInPlane() ? "RUDDER" : "STEER";
     const float cs = fs * 0.5f;
     const ImVec2 ts = font->CalcTextSizeA(cs, 1e6f, 0.f, caption);
     const ImVec2 cp(mid - 0.5f * ts.x, (kIosStrY + 0.004f) * H);
     dl->AddText(font, cs, ImVec2(cp.x + 1.f, cp.y + 1.f), IM_COL32(0, 0, 0, 120), caption);
     dl->AddText(font, cs, cp, IM_COL32(255, 255, 255, 215), caption);
+}
+
+void IosDrawStick(ImDrawList* dl, ImFont* font, float fs, float W, float H, bool held)
+{
+    float x0, y0, side;
+    IosStickRect(W, H, x0, y0, side);
+    const float cx = x0 + 0.5f * side, cy = y0 + 0.5f * side;
+    const float half = IosStickHalf(H);
+    const float travel = 0.5f * side - half;
+    const ImVec2 p0(x0, y0), p1(x0 + side, y0 + side);
+
+    dl->AddRectFilled(ImVec2(p0.x, p0.y + 2.f), ImVec2(p1.x, p1.y + 2.f), IM_COL32(0, 0, 0, 40), 18.f, ImDrawCornerFlags_All);
+    dl->AddRectFilled(p0, p1, IM_COL32(236, 245, 255, 62), 18.f, ImDrawCornerFlags_All);
+    dl->AddRect(p0, p1, IM_COL32(255, 255, 255, 190), 18.f, ImDrawCornerFlags_All, 1.8f);
+    dl->AddLine(ImVec2(x0 + 14.f, cy), ImVec2(x0 + side - 14.f, cy), IM_COL32(255, 255, 255, 105), 1.2f);
+    dl->AddLine(ImVec2(cx, y0 + 14.f), ImVec2(cx, y0 + side - 14.f), IM_COL32(255, 255, 255, 105), 1.2f);
+    dl->AddCircle(ImVec2(cx, cy), 0.6f * half, IM_COL32(255, 255, 255, 120), 24, 1.2f);
+
+    const float knob_x = cx + s_iosStickX * travel;
+    const float knob_y = cy + s_iosStickY * travel;
+    dl->AddCircleFilled(ImVec2(knob_x, knob_y + 2.f), half, IM_COL32(0, 0, 0, 55), 28);
+    dl->AddCircleFilled(ImVec2(knob_x, knob_y), half, held ? IM_COL32(150, 208, 255, 228) : IM_COL32(238, 246, 255, 205), 28);
+    dl->AddCircle(ImVec2(knob_x, knob_y), half, IM_COL32(255, 255, 255, 250), 28, 1.6f);
+    dl->AddCircleFilled(ImVec2(knob_x, knob_y), 0.28f * half, IM_COL32(40, 60, 90, 170), 12);
+
+    const char* caption = "STICK";
+    const float cs = fs * 0.5f;
+    const ImVec2 ts = font->CalcTextSizeA(cs, 1e6f, 0.f, caption);
+    const ImVec2 cp(cx - 0.5f * ts.x, y0 - cs - 3.f);
+    dl->AddText(font, cs, ImVec2(cp.x + 1.f, cp.y + 1.f), IM_COL32(0, 0, 0, 120), caption);
+    dl->AddText(font, cs, cp, IM_COL32(255, 255, 255, 215), caption);
+}
+
+void IosDrawLever(ImDrawList* dl, ImFont* font, float W, float H, bool held)
+{
+    float top, bot;
+    IosLeverTravel(H, top, bot);
+    const float zx0 = kIosLevX * W;
+    const float zx1 = (kIosLevX + kIosLevW) * W;
+    const float cx = 0.5f * (zx0 + zx1);
+    const float half = IosPedalThumbHalf(H);
+    const float track_half = 0.19f * (zx1 - zx0);
+
+    const ImVec2 t0(cx - track_half, top - 0.55f * half);
+    const ImVec2 t1(cx + track_half, bot + 0.55f * half);
+    dl->AddRectFilled(ImVec2(t0.x, t0.y + 2.f), ImVec2(t1.x, t1.y + 2.f), IM_COL32(0, 0, 0, 40), track_half, ImDrawCornerFlags_All);
+    dl->AddRectFilled(t0, t1, IM_COL32(236, 245, 255, 70), track_half, ImDrawCornerFlags_All);
+    dl->AddRect(t0, t1, IM_COL32(255, 255, 255, 190), track_half, ImDrawCornerFlags_All, 1.8f);
+
+    const float thumb_y = IosLeverThumbY(s_iosThrottle, H);
+    if (s_iosThrottle > 0.002f)
+        dl->AddRectFilled(ImVec2(cx - track_half + 3.f, thumb_y), ImVec2(cx + track_half - 3.f, bot + 0.3f * half), IM_COL32(84, 214, 120, 175), 4.f, ImDrawCornerFlags_All);
+    for (int q = 0; q <= 4; ++q)
+    {
+        const float mark_y = IosLeverThumbY(0.25f * (float)q, H);
+        dl->AddLine(ImVec2(cx - track_half - 7.f, mark_y), ImVec2(cx - track_half, mark_y), IM_COL32(255, 255, 255, 175), 1.5f);
+    }
+
+    const ImVec2 b0(zx0, thumb_y - half), b1(zx1, thumb_y + half);
+    dl->AddRectFilled(ImVec2(b0.x, b0.y + 2.f), ImVec2(b1.x, b1.y + 2.f), IM_COL32(0, 0, 0, 50), 10.f, ImDrawCornerFlags_All);
+    dl->AddRectFilled(b0, b1, held ? IM_COL32(150, 208, 255, 228) : IM_COL32(238, 246, 255, 205), 10.f, ImDrawCornerFlags_All);
+    dl->AddRect(b0, b1, IM_COL32(255, 255, 255, 250), 10.f, ImDrawCornerFlags_All, 1.6f);
+    char pct[8];
+    std::snprintf(pct, sizeof(pct), "%d%%", (int)std::lround(100.f * s_iosThrottle));
+    const float text_size = 0.92f * half;
+    const ImVec2 pts = font->CalcTextSizeA(text_size, 1e6f, 0.f, pct);
+    dl->AddText(font, text_size, ImVec2(cx - 0.5f * pts.x, thumb_y - 0.5f * pts.y), IM_COL32(20, 36, 58, 240), pct);
 }
 
 // Round speed gauge: a needle on a 270 degree dial, with the number in the
@@ -3729,7 +3940,7 @@ void IosDrawGauge(ImDrawList* dl, ImFont* font, float W, float H, const IosCtl& 
     s_iosGaugeSpeed += (speed - s_iosGaugeSpeed) * IosSmooth(0.09f);
     // The scale grows in steps of 60 km/h when the needle nears the end and
     // shrinks again (with hysteresis) when it falls well below the step.
-    if (s_iosGaugeSpeed > 0.92f * s_iosGaugeMax && s_iosGaugeMax < 360.f)
+    if (s_iosGaugeSpeed > 0.92f * s_iosGaugeMax && s_iosGaugeMax < (IosInPlane() ? 1200.f : 360.f))
         s_iosGaugeMax += 60.f;
     else if (s_iosGaugeMax > 120.f && s_iosGaugeSpeed < 0.55f * (s_iosGaugeMax - 60.f))
         s_iosGaugeMax -= 60.f;
@@ -3780,6 +3991,21 @@ void IosDrawGauge(ImDrawList* dl, ImFont* font, float W, float H, const IosCtl& 
     const float us = R * 0.14f;
     const ImVec2 uts = font->CalcTextSizeA(us, 1e6f, 0.f, unit);
     dl->AddText(font, us, ImVec2(ctr.x - 0.5f * uts.x, ctr.y + R * 0.66f), IM_COL32(185, 215, 240, 225), unit);
+
+    if (IosInPlane())
+    {
+        RoR::ActorPtr actor = App::GetGameContext()->GetPlayerActor();
+        if (actor && actor->ar_num_nodes > 0)
+        {
+            char altitude[24];
+            std::snprintf(altitude, sizeof(altitude), "ALT %d m", (int)std::lround(actor->ar_nodes[0].AbsPosition.y));
+            const float altitude_size = R * 0.17f;
+            const ImVec2 text_size = font->CalcTextSizeA(altitude_size, 1e6f, 0.f, altitude);
+            const ImVec2 pos(ctr.x - 0.5f * text_size.x, ctr.y + R + 4.f);
+            dl->AddText(font, altitude_size, ImVec2(pos.x + 1.f, pos.y + 1.f), IM_COL32(0, 0, 0, 140), altitude);
+            dl->AddText(font, altitude_size, pos, IM_COL32(255, 255, 255, 235), altitude);
+        }
+    }
 }
 
 // The on-screen controls themselves, drawn on the foreground draw list so they
@@ -3805,7 +4031,9 @@ void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
         dl->AddRectFilled(q0 + ImVec2(0.f, 3.f), q1 + ImVec2(0.f, 3.f), IM_COL32(0, 0, 0, 80), 16.f, ImDrawCornerFlags_All);
         dl->AddRectFilled(q0, q1, IM_COL32(18, 30, 46, 148), 16.f, ImDrawCornerFlags_All);
         dl->AddRect(q0, q1, IM_COL32(255, 255, 255, 130), 16.f, ImDrawCornerFlags_All, 2.f);
-        const char* page_titles[] = {"LIGHTS", "DRIVE", "EXTRAS"};
+        const char* truck_titles[] = {"LIGHTS", "DRIVE", "EXTRAS"};
+        const char* plane_titles[] = {"FLIGHT", "ENGINE", "LIGHTS"};
+        const char** page_titles = IosInPlane() ? plane_titles : truck_titles;
         const char*  title = page_titles[s_iosPanelPage];
         const float  tfs   = fs * 0.5f;
         const ImVec2 ts    = font->CalcTextSizeA(tfs, 1e6f, 0.f, title);
@@ -3827,6 +4055,15 @@ void IosDrawControls(float W, float H, const std::vector<IosCtl>& ctls)
                 if (s_iosCtlTouches[t].kind == (int)c.kind) { held = true; break; }
             if (c.kind == IOS_PEDALS) IosDrawPedals(dl, W, H, held);
             else                      IosDrawSteerBar(dl, font, fs, W, H, held);
+            continue;
+        }
+        if (c.kind == IOS_STICK || c.kind == IOS_LEVER)
+        {
+            bool held = false;
+            for (size_t t = 0; t < s_iosCtlTouches.size(); ++t)
+                if (s_iosCtlTouches[t].kind == (int)c.kind) { held = true; break; }
+            if (c.kind == IOS_STICK) IosDrawStick(dl, font, fs, W, H, held);
+            else                     IosDrawLever(dl, font, W, H, held);
             continue;
         }
         if (c.kind == IOS_GAUGE)    { IosDrawGauge(dl, font, W, H, c, s_iosPanel); continue; }
@@ -5434,6 +5671,55 @@ void main()
     if "vertex_program_ref RoR/Character_iOS_VP" not in text:
         text = must_replace(text, base_pass_anchor, base_pass_replacement,
                             "character.material: attach explicit GLES2 character shaders")
+    write(path, text)
+
+
+def patch_ios_hide_stock_dashboards(ror):
+    """Keep the phone's custom speed gauge unobstructed by stock dashboards."""
+    path = os.path.join(ror, "source", "main", "gui", "OverlayWrapper.cpp")
+    text = read(path)
+    text = must_replace(
+        text,
+        "void OverlayWrapper::showDashboardOverlays(bool show, ActorPtr actor)\n{\n    m_dashboard_visible = show;\n",
+        "void OverlayWrapper::showDashboardOverlays(bool show, ActorPtr actor)\n{\n"
+        "#ifdef ROR_PLATFORM_IOS\n"
+        "    show = false;\n"
+        "#endif\n"
+        "    m_dashboard_visible = show;\n",
+        "OverlayWrapper.cpp: hide stock dashboard overlays on iOS",
+    )
+    write(path, text)
+
+    path = os.path.join(ror, "source", "main", "gui", "DashBoardManager.cpp")
+    text = read(path)
+    text = must_replace(
+        text,
+        "void DashBoardManager::setVisible(bool visibility)\n{\n    visible = visibility;\n",
+        "void DashBoardManager::setVisible(bool visibility)\n{\n"
+        "#ifdef ROR_PLATFORM_IOS\n"
+        "    visibility = false;\n"
+        "#endif\n"
+        "    visible = visibility;\n",
+        "DashBoardManager.cpp: hide 2D dashboards on iOS",
+    )
+    write(path, text)
+
+
+def patch_ios_airplane_input(ror):
+    """Read simulated analog throttle values even when no hardware is mapped."""
+    path = os.path.join(ror, "source", "main", "GameContext.cpp")
+    text = read(path)
+    text = must_replace(
+        text,
+        "    if (airplane->isEventDefined(EV_AIRPLANE_THROTTLE_AXIS))\n    {\n",
+        "#ifdef ROR_PLATFORM_IOS\n"
+        "    if (true) // the on-screen throttle lever drives EV_AIRPLANE_THROTTLE_AXIS\n"
+        "#else\n"
+        "    if (airplane->isEventDefined(EV_AIRPLANE_THROTTLE_AXIS))\n"
+        "#endif\n"
+        "    {\n",
+        "GameContext.cpp: use analog aircraft throttle input on iOS",
+    )
     write(path, text)
 
 
@@ -7624,6 +7910,8 @@ def main():
     # directly - the one such caller, and the first thing to dereference the
     # null keyboard after the main menu comes up.
     patch_gui_manager(args.ror_dir)
+    patch_ios_hide_stock_dashboards(args.ror_dir)
+    patch_ios_airplane_input(args.ror_dir)
     # The character mesh and the spawn hint live outside source/, so they are
     # their own patches rather than part of patch_gui_manager().  Both are
     # resource/GUI fixes the device asks for directly: the "tint" pass that
