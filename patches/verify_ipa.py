@@ -38,6 +38,31 @@ import zipfile
 MYGUI_SHADERS = ("MyGUI_VP.glsles", "MyGUI_FP.glsles")
 
 
+def find_app_bundle(names):
+    """Return the app bundle path in the IPA, such as Payload/RoR.app."""
+    bundles = sorted({
+        "/".join(n.split("/")[:2])
+        for n in names
+        if n.startswith("Payload/")
+        and len(n.split("/")) >= 2
+        and n.split("/")[1].endswith(".app")
+    })
+    return bundles[0] if bundles else "Payload/RoR.app"
+
+
+def find_app_executable(names, bundle="Payload/RoR.app"):
+    """Return the main executable file in the bundle, if present."""
+    bundle_root = bundle.rstrip("/")
+    candidates = [
+        n for n in names
+        if n.startswith(bundle_root + "/")
+        and len(n.split("/")) == 3
+        and n.rsplit("/", 1)[1] not in {"Info.plist", "PkgInfo"}
+        and "." not in n.rsplit("/", 1)[1]
+    ]
+    return sorted(candidates)
+
+
 def main(argv):
     if len(argv) != 2:
         print(__doc__)
@@ -46,6 +71,7 @@ def main(argv):
     ipa = zipfile.ZipFile(argv[1])
     names = ipa.namelist()
     bad = []
+    bundle = find_app_bundle(names)
 
     # ------------------------------------------------------------------ #
     # 1. The bundle must not contain a directory named resources/.         #
@@ -59,8 +85,9 @@ def main(argv):
                 "install such an app (PORT_FINDINGS 7.22)" % dirname)
     print("  ok      bundle top level: %s" % ", ".join(sorted(top)))
 
-    if not any(n.startswith("Payload/") and n.split("/")[-1] == "RoR" for n in names):
-        bad.append("no Payload/RoR.app/RoR executable in the archive")
+    exe = find_app_executable(names, bundle)
+    if not exe:
+        bad.append("no %s/<main executable> in the archive" % bundle)
 
     # ------------------------------------------------------------------ #
     # 2. skeleton.zip, which SetUpConfigSkeleton() hard-requires.          #
@@ -114,8 +141,6 @@ def main(argv):
     #    'rigsofrods/WallpaperMat' has no Vertex Shader. Use the RTSS or
     #    write custom shaders."
     # which the main loop's catch turns into yet another silent black screen.
-    exe = [n for n in names
-           if n.startswith("Payload/") and n.split("/")[-1] == "RoR"]
     if exe:
         binary = ipa.read(exe[0])
         markers = (b"RTShader System up, active material scheme",
@@ -536,7 +561,7 @@ def main(argv):
     # shows a black square) and the plist not naming the files (the PNGs
     # ship but iOS never looks them up).  The header check enforces what
     # iOS insists on for icons: 8-bit RGB *without* an alpha channel.
-    icon_prefix = exe[0].rsplit("/", 1)[0] + "/" if exe else "Payload/RoR.app/"
+    icon_prefix = bundle + "/" if bundle else "Payload/RoR.app/"
     want_icons = {"AppIcon60x60@2x.png": (120, 120),
                   "AppIcon60x60@3x.png": (180, 180),
                   "Icon-76@2x.png": (152, 152),
